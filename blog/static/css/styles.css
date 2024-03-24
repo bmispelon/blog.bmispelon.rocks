@@ -1,0 +1,58 @@
+[data-theme="light"],
+:root:not([data-theme="dark"]) {
+  --header-transparency-overlay: #fffa;
+}
+
+@media only screen and (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --header-transparency-overlay: #13171fa0;
+  }
+}
+[data-theme="dark"] {
+  --header-transparency-overlay: #13171fa0;
+}
+
+header {
+  /* from https://stackoverflow.com/a/62033585 */
+  background: linear-gradient(var(--header-transparency-overlay), var(--header-transparency-overlay)),
+              url('./images/headers/6796_norgesavd.jpeg');
+  /* image-set() for firefox: */
+  background: linear-gradient(var(--header-transparency-overlay), var(--header-transparency-overlay)),
+              -webkit-image-set(
+                url("./images/headers/6796_norgesavd.avif") type("image/avif"),
+                url("./images/headers/6796_norgesavd.webp") type("image/webp"),
+                url("./images/headers/6796_norgesavd.jpeg") type("image/jpeg")
+              );
+  /* image-set() for anyone else */
+  background: linear-gradient(var(--header-transparency-overlay), var(--header-transparency-overlay)),
+              image-set(
+                url("./images/headers/6796_norgesavd.avif") type("image/avif"),
+                url("./images/headers/6796_norgesavd.webp") type("image/webp"),
+                url("./images/headers/6796_norgesavd.jpeg") type("image/jpeg")
+              );
+  background-position: center;
+}
+
+header, main, footer {
+  border: 5px solid var(--pico-muted-border-color);
+}
+main {
+  margin-top: 5px;
+  margin-bottom: 5px;
+}
+
+.metadata .metadata-tags ul {
+  list-style: none;
+}
+.metadata .metadata-tags ul li {
+  display: inline;
+}
+
+body#about figure {
+  float: right;
+  width: 50%;
+}
+
+main {
+  min-height: 100vh;
+}
