@@ -1,0 +1,6 @@
+<article>
+  <h2><a href="{{ article.absolute_url }}">{{ article.title }}</a></h2>
+  <p>
+    <small>Published on <time datetime="{{ article.pubdate.isoformat() }}">{{ article.pubdate_str }}</time></small>
+  </p>
+</article>

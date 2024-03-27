@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+
+{% block main %}
+<article>
+  <h1>{{ title }}</h1>
+  <aside class="metadata">
+    <p class="metadata-pubdate">
+      <small
+        >Published on <time datetime="{{ pubdate.isoformat() }}">{{ pubdate.strftime("%B %-d")}}th</time></small
+      >
+    </p>
+    <p class="metadata-tags">
+      <small>
+        Categories:
+        <a href="/collections/tag/XXX" rel="tag"><!-- $TAG --></a>, <span class="">Unlinked</span>.
+      </small>
+    </p>
+  </aside>
+  <p><!-- CONTENT GOES HERE --></p>
+</article>
+{% endblock %}
