@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="/static/css/vendors/pico.min.css" />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <title>Unicode Poetry Bot | Baptiste Mispelon</title>
+  </head>
+  <body>
+    <header class="container">
+      <h1></h1>
+      <nav>
+        <ul>
+          <li><a href="/">./index.html</a></li>
+          <li><a href="/about.html">./about.html</a></li>
+        </ul>
+      </nav>
+    </header>
+    <main class="container">
+
+<article>
+  <h1>Unicode Poetry Bot</h1>
+  <aside class="metadata">
+    <p class="metadata-pubdate">
+      <small
+        >Published on <time datetime="2024-03-27">March 27th</time></small
+      >
+    </p>
+  </aside>
+  <p>
+    <strong>TLDR;</strong>
+    I made a <a href="https://botsin.space/@unicodedatapoetry">tiny bot</a> that generates "poetry" in 5 lines of Python:</p>
+  <pre><code>import random as r, unicodedata
+coolwords = [unicodedata.name(chr(119556+i)).split()[-1] for i in range(83)]
+for w in r.sample(coolwords, r.randrange(9, 15)):
+    print(w, end=r.choice('  \n'))
+print()</code></pre>
+  <p>This blog post explains how the bot works and how I got it hosted for cheap.</p>
+
+  <section>
+    <h2>0 - The Unicode database</h2>
+    <p>In order to explain how the bot works, I need to take a brief detour and tell you about the unicode database, and in particular about Python's <code>unicodedata</code> standard library module.</p>
+    <p>I'm simplifying a lot (if you want more details, the <a href="https://en.wikipedia.org/wiki/Unicode">Wikipedia page about Unicode</a> is a pretty good starter), but basically the Unicode standard is a giant list that assigns a unique id number to all known letters and symbols.</p>
+    <p>For example the character <code>B</code> has the id 66, the symbol <code>€</code> is 8364, and the emoji <code>🐍</code> is 128013. In Python you can use the builtin function <a href="https://docs.python.org/3/library/functions.html#ord"><code>ord()</code></a> to get a character's id:</p>
+    <pre><code>>>> ord("B")
+66
+>>> ord("€")
+8364
+>>> ord("🐍")
+128013</code></pre>
+  <p>To get a character when you have its id, you use the <a href="https://docs.python.org/3/library/functions.html#chr"><code>chr()</code></a> builtin function:</p>
+  <pre><code>>>> chr(66)
+'B'
+>>> chr(8364)
+'€'
+>>> chr(128013)
+'🐍'</code></pre>
+  <p>But characters don't just have a standard id in unicode, they also have a standard <em>name</em>, and that's where things start to get a little more intereting. <code>B</code> is "LATIN CAPITAL LETTER B", <code>€</code> is "EURO SIGN", and <code>🐍</code> is ... "SNAKE". Neat, but not a huge surprise probably.</p>
+  <p>This is what the <code>unicodedata</code> module is for, and in particular <a href="https://docs.python.org/3/library/unicodedata.html#unicodedata.name"><code>unicodedata.name()</code></a>. It's part of the standard library and doesn't need to be installed, so you can import it anywhere you have Python installed and try it out:</p>
+  <pre><code>>>> import unicodedata
+>>> unicodedata.name("B")
+'LATIN CAPITAL LETTER B'
+>>> unicodedata.name("€")
+'EURO SIGN'
+>>> unicodedata.name("🐍")
+'SNAKE'</code></pre>
+  <p>For some extra fun, you can try the following (some of the examples are sneaky so make sure you copy/paste):</p>
+  <pre><code>unicodedata.name("&")
+unicodedata.name("А")
+unicodedata.name(" ")
+unicodedata.name("😤")</code></pre>
+
+  <section>
+    <h2>1 - The poetry generator</h2>
+    <p>While I was working on a silly side-project one day (which might come up in a future post), I ended up with a text file listing all the characters known to <code>unicodedata</code> (their ids and their names). While scrolling rapidly through it something caught my eye around index 119552, and that's how I learned about the <a href="https://en.wikipedia.org/wiki/Taixuanjing">Taixuanjing</a>. It's an ancient text written in a special alphabet consisting of about 90 symbols. The interesting bit is that those symbols have some pretty evocative names. In the Unicode database, those symbols are all grouped together and with some basic Python code, we can quickly see a list of them:</p>
+    <pre><code>>>> for index in range(119552, 119639):
+...     print(index, unicodedata.name(chr(index)))
+... 
+119552 MONOGRAM FOR EARTH
+119553 DIGRAM FOR HEAVENLY EARTH
+119554 DIGRAM FOR HUMAN EARTH
+119555 DIGRAM FOR EARTHLY HEAVEN
+119556 DIGRAM FOR EARTHLY HUMAN
+119557 DIGRAM FOR EARTH
+119558 TETRAGRAM FOR CENTRE
+119559 TETRAGRAM FOR FULL CIRCLE
+119560 TETRAGRAM FOR MIRED
+119561 TETRAGRAM FOR BARRIER
+119562 TETRAGRAM FOR KEEPING SMALL
+119563 TETRAGRAM FOR CONTRARIETY
+119564 TETRAGRAM FOR ASCENT
+119565 TETRAGRAM FOR OPPOSITION
+119566 TETRAGRAM FOR BRANCHING OUT
+119567 TETRAGRAM FOR DEFECTIVENESS OR DISTORTION
+119568 TETRAGRAM FOR DIVERGENCE
+119569 TETRAGRAM FOR YOUTHFULNESS
+# ...</code></pre>
+
+    <p>Once I had all these cool names, the rest came rather quickly.</p>
+    <p>I used a list comprehension to go through that list, selecting only the last word (<code>.split()[-1]</code>).</p>
+    <p>Then I used <code>random.sample()</code> to pick between 9 and 15 unique words out of that list.</p>
+    <p>And finally I printed them out, using the <code>end=r.choice('  \n')</code> trick to print either a space after the word (66% chance) or a new line (33% chance).</p>
+    <p>The results are interesting and often have a mystical and/or threatening vibe to them:</p>
+    <blockquote>
+      DARKENING
+      HUMAN
+      RESPONSE LABOURING SINKING PURITY LEGION
+      STRENGTH ENCOUNTERS ACCUMULATION GATHERING CONTENTION
+      MODEL GUARDEDNESS
+    </blockquote>
+  </section>
+
+  <section>
+    <h2>3 - The bot</h2>
+    <p>Some weeks ago I learned about the <a href="https://botsin.space/">botsin.space Mastodon instance</a> which is dedicated to hosting bots (who could have guessed?). I thought this little "poetry" generator would be a perfect excuse to try my hand at building one.</p>
+    <p>Because I already use them for other projects, I decided to host the bot on <a href="https://m.do.co/c/5ac918daa534">Digital Ocean</a> (heads up: that's an affiliate link) and their "serverless" infrastructure.</p>
+    <p>This "serverless" setup lets me execute some Python at regular intervals (I chose hourly) and it's pretty cheap (my current usage is well within the free tier).</p>
+    <p>After an evening reading a mix of <a href="https://docs.digitalocean.com/products/functions/how-to/create-functions/">official documentation</a>, <a href="https://shkspr.mobi/blog/2018/08/easy-guide-to-building-mastodon-bots/">blog posts</a>, and <a href="https://github.com/digitalocean/sample-functions-python-sendgrid-email">code examples</a>  managed to cobble together <a href="https://github.com/bmispelon/unicodedata-poetry">a working bot</a>.</p>
+    <p>May I present you: <a href="https://botsin.space/@unicodedatapoetry">@unicodedatapoetry@botsin.space</a>. If you follow it, you get a random "poem" every hour (at half past).</p>
+  </section>
+</article>
+
+    </main>
+    <footer class="container">
+      <p>© <strong>Baptiste Mispelon</strong> unless otherwise noted</p>
+      <p>Made with 💖 by a human</p>
+    </footer>
+  </body>
+</html>
