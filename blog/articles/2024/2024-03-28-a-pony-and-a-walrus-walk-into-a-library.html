@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="/static/css/vendors/pico.min.css" />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <title>A Pony and a Walrus Walk into a Library | Baptiste Mispelon</title>
+  </head>
+  <body>
+    <header class="container">
+      <h1></h1>
+      <nav>
+        <ul>
+          <li><a href="/">./index.html</a></li>
+          <li><a href="/about.html">./about.html</a></li>
+        </ul>
+      </nav>
+    </header>
+    <main class="container">
+      <article>
+        <h1>A Pony and a Walrus Walk into a Library</h1>
+        <p>🦭 + 🐴 + 🏛️ = ❓</p>
+        <aside class="metadata">
+          <p class="metadata-pubdate">
+            <small>Published on <time datetime="2024-03-28">March 28th</time></small>
+          </p>
+        </aside>
+        <p>
+          <strong>TLDR;</strong>
+          I made a library that adds the walrus operator (<code>:=</code>) to Django templates:
+          <a href="https://github.com/bmispelon/django-walrus">django-walrus</a>.
+        </p>
+
+        <section>
+          <h2>The walrus operator</h2>
+          <p>
+            The <strong>walrus operator</strong> <code>:=</code> (officially called an
+            <a href="https://docs.python.org/3/reference/expressions.html#assignment-expressions"
+              >"assignment expression"</a
+            >) was introduced to Python in the 3.8 release (October 2019).
+          </p>
+          <p>
+            <small
+              >(It's called "walrus" because <code>:=</code> looks like the eyes and the tusks of a
+              <a href="https://en.wikipedia.org/wiki/Walrus#/media/File:Pacific_Walrus_-_Bull_(8247646168).jpg"
+                >walrus</a
+              >, in case you were wondering)</small
+            >
+          </p>
+          <p>
+            One way to think about this operator is that it's kind of like a regular assignment with <code>=</code>, but
+            it also "returns" the value it just assigned. So you can assign a value and test against it in a single
+            step, like so:
+          </p>
+          <pre><code># original code
+count = Article.objects.filter(title__icontains="Django").count()
+if count:
+    print(f"Found {count} matching articles")
+else:
+    print("No matching article found")
+
+# rewritten with the walrus operator
+if count := Article.objects.filter(title__icontains="Django").count():
+    print(f"Found {count} matching articles")
+else:
+    print("No matching article found")</code></pre>
+
+          <p>
+            There's a lot more to it (the
+            <a href="https://peps.python.org/pep-0572/">PEP that introduced the new feature</a> is 1300 lines long! 😮),
+            but that's the basics. Now let's see how Django gets into the mix.
+          </p>
+        </section>
+
+        <section>
+          <h2>Walruses in Django templates</h2>
+
+          <p>
+            Seeing those examples of how the walrus operator can simplify <code>if</code> statements in Python got me
+            thinking. Django templates have <code>{% if %}</code> too, and they kind of have assignments with
+            <code>{% with %}</code>. So could we somehow use the walrus operator there?
+          </p>
+
+          <p>
+            Let's say you have the following template that calls out to a
+            <code>some_complicated_function()</code> that's not particularly efficient (maybe it makes some complez
+            database queries for example, or it calls out to an external API, ...).
+          </p>
+
+          <pre><code>{% if mymodel.some_complicated_function %}
+    Result: {{ mymodel.some_complicated_function }}
+{% endif %}</code></pre>
+
+          <p>
+            That's not really ideal because the function is called twice. We can rewrite using
+            <code>{% with %}</code> to store the result in a variable like this:
+          </p>
+
+          <pre><code>{% with result=mymodel.some_complicated_function %}
+    {% if result %}
+        Result: {{ result }}
+    {% endif %}
+{% endwith %}</code></pre>
+
+          <p>
+            Now the function is only called once which is better, but that's a lot of extra lines. Wouldn't it be better
+            if we could do:
+          </p>
+
+          <pre><code>{% if result := mymodel.some_complicated_function %}
+    Result: {{ result }}
+{% endif %}</code></pre>
+        </section>
+
+        <section>
+          <h2>Introducing <code>django-walrus</code></h2>
+
+          <p>
+            That's exactly what my library <a href="https://github.com/bmispelon/django-walrus">django-walrus</a> does!
+            Install it with <code>pip install django-walrus</code>, add <code>"walrus"</code> to your
+            <code>settings.INSTALLED_APPS</code>, and the new syntax is magically avaible in your Django templates.
+          </p>
+
+          <p>
+            The code for it is very simple, but also quite hackish (it uses some internal APIs which are not guaranteed
+            to continue existing as Django is updated):
+          </p>
+
+          <pre><code>from django.template import smartif
+
+def _walrus_op(context, x, y):
+    result = y.eval(context)
+    context[x.value.var.var] = result
+    return result
+
+smartif.OPERATORS[':='] = smartif.infix(11, _walrus_op)
+smartif.OPERATORS[':='].id = ':='</code></pre>
+
+          <p>
+            It turns out that Django's <code>{% if %}</code> tag (whose code is located in the
+            <a href="https://github.com/django/django/blob/main/django/template/smartif.py"><code>smartif</code></a
+            >) uses a convenient
+            <a
+              href="https://github.com/django/django/blob/944745afe2ec45aed30cef799c250107f1364ca7/django/template/smartif.py#L97C1-L111"
+              >operator dictionary</a
+            >
+            at its toplevel. This makes it very easy to add custom operators to the template language.
+          </p>
+
+          <p>
+            For my library I packaged the whole thing in an <code>AppConfig.ready()</code> so that the monkeypatching
+            happens automatically when the app is loaded, and that was it.
+          </p>
+        </section>
+      </article>
+    </main>
+    <footer class="container">
+      <p>© <strong>Baptiste Mispelon</strong> unless otherwise noted</p>
+      <p>Made with 💖 by a human</p>
+    </footer>
+  </body>
+</html>
