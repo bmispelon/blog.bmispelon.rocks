@@ -3,6 +3,7 @@
 
 # Start a webserver on the given port
 serve port='8888':
+    python -m webbrowser -t http://localhost:{{port}}
     python -m http.server -d blog {{port}}
 
 # Run the `prettier` formatter on the blog's content (committed files only)
