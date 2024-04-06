@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="/static/css/vendors/pico.min.css" />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <title>Sentry initialization in a Django project | Baptiste Mispelon</title>
+  </head>
+  <body>
+    <header class="container">
+      <h1>{# Blog title goes here #}</h1>
+      <nav>
+        <ul>
+          <li><a href="/">./index.html</a></li>
+          <li><a href="/about.html">./about.html</a></li>
+        </ul>
+      </nav>
+    </header>
+    <main class="container">
+      <article>
+        <h1>Sentry initialization in a Django project</h1>
+        <aside class="metadata">
+          <p class="metadata-pubdate">
+            <small>Published on <time datetime="2024-04-06">April 6th</time></small>
+          </p>
+        </aside>
+        <p>
+          At <code>$DAYJOB</code> we use <a href="https://sentry.io/">Sentry</a> to monitor errors in production. It
+          works really well but our particular setup caused an annoyance that was surprisingly tricky to fix.
+        </p>
+
+        <h2>The annoyance</h2>
+        <p>
+          Following
+          <a href="https://docs.sentry.io/platforms/python/integrations/django/#configure"
+            >Sentry's official documentation</a
+          >, we added the following code to our settings file:
+        </p>
+
+        <pre><code>import sentry_sdk
+sentry_sdk.init(...)  # credentials etc</code></pre>
+
+        <p>
+          This works perfectly fine, and once that snippet was in place error reports started showing up in the Sentry
+          interface as they happened in production. So far so good.
+        </p>
+
+        <p>
+          But after some time we started getting reports for some strange errors. Every once in a while, Sentry would
+          start reporting exceptions like <code>SyntaxError</code> or <code>SystemExit</code>. What was going on?
+        </p>
+
+        <p>
+          The answer was quite logical once I understood it, but it did take me by suprise. By putting the
+          <code>sentry_sdk.init(...)</code> in our settings, it means that Sentry error reporting is active any time the
+          project is loaded. That's a good thing overall as it means you catch a lot of potential problems, but there
+          was once situation for us where that behavior was undesirable: the shell.
+        </p>
+
+        <p>
+          These errors I was observing were the result of one of my coworkers starting a shell (<code
+            >./manage.py shell</code
+          >) on the server. If they made a typo, Python would throw a <code>SyntaxError</code> exception which would be
+          diligently caught and reported by Sentry. The same thing also happened when they exited the shell, as Python
+          then throws a <code>SystemExit</code> exception.
+        </p>
+
+        <p>
+          At first it was pretty fun being able to tease my coworker about their typos, but it got annoying quite fast
+          and I started looking into how to exclude the shell from Sentry's error reporting.
+        </p>
+
+        <h2>Attempt 1: a better entry point?</h2>
+
+        <p>
+          My first idea was to find a better place than <code>settings.py</code> where I could call
+          <code>sentry_sdk.init()</code>. I figured there must be a file that gets loaded when running the website, but
+          not when running a shell.
+        </p>
+
+        <p>After thinking about it for a while, I came up with 3 files that could be good candidates:</p>
+
+        <dl>
+          <dt><code>settings.py</code></dt>
+          <dd>Our current solution (and the one recommended by the official docs).</dd>
+          <dt><code>wsgi.py</code></dt>
+          <dd>
+            Created automatically by Django, this is the file that your webserver (<code>gunicorn</code>,
+            <code>uwsgi</code>, ...) will load.
+          </dd>
+          <dt><code>manage.py</code></dt>
+          <dd>
+            This file is created automatically by Django when you start a project, and it's very rarely modified but it
+            can be a nifty entry point.
+          </dd>
+        </dl>
+
+        <p>
+          At first glance, <code>wsgi.py</code> seemed like a good entry point for what I wanted, but I quickly realized
+          that it had a major drawback which ended up being a dealbreaker for me: Celery workers.
+        </p>
+
+        <p>
+          As it turns out, there's more usecases to take into account than just web workers and management commands:
+        </p>
+
+        <dl>
+          <dt>Web workers</dt>
+          <dd>
+            The main usecase for most Django projects I would guess (Django is a <em>web</em>framework after all).
+          </dd>
+
+          <dt>Management commands</dt>
+          <dd>
+            Your classic <code>./manage.py COMMAND</code> (<code>collectstatic</code>, <code>createsuperuser</code>,
+            <code>migrate</code>, ...). Either called manually, or scheduled with something like CRON.
+          </dd>
+
+          <dt>Celery workers</dt>
+          <dd>Or any kind of asynchronous task system. Most projects will have one when they reach a certain size.</dd>
+
+          <dt>Random python scripts</dt>
+          <dd>
+            Probably not a good practice in general, but for some one-off tasks it's hard to beat the convenience of
+            running a plain python script.
+          </dd>
+        </dl>
+
+        <p>
+          3 entry points, 4 different uses cases. If my math is right, that's 12 different scenarios to consider (✅
+          means the file is loaded, ❌ means it isn't):
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th></th>
+              <th><code>settings.py</code></th>
+              <th><code>manage.py</code></th>
+              <th><code>wsgi.py</code></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th>Web</th>
+              <td>✅</td>
+              <td>❌ <a href="#footnote-web-manage-py">*</a></td>
+              <td>✅</td>
+            </tr>
+            <tr>
+              <th>Celery worker</th>
+              <td>✅</td>
+              <td>❌</td>
+              <td>❌</td>
+            </tr>
+            <tr>
+              <th>Management command</th>
+              <td>✅</td>
+              <td>✅ <a href="#footnote-management-cmd">**</a></td>
+              <td>❌</td>
+            </tr>
+            <tr>
+              <th>Python script</th>
+              <td>✅ <a href="#footnote-python-script">***</a></td>
+              <td>❌</td>
+              <td>❌</td>
+            </tr>
+          </tbody>
+        </table>
+        <ul class="footnotes">
+          <li id="footnote-web-manage-py">
+            <small
+              >* Unless you use something like
+              <a href="https://pypi.org/project/django-webserver/">django-webserver</a> or
+              <a href="https://pypi.org/project/django-prodserver/">django-prodserver</a>.</small
+            >
+          </li>
+          <li id="footnote-management-cmd">
+            <small
+              >** But only if you use <code>./manage.py COMMAND</code> and not
+              <code>python -m django COMMAND</code>.</small
+            >
+          </li>
+          <li id="footnote-python-script">
+            <small
+              >*** If you call <code>django.init()</code> in your script, which you probably want to do anyway.</small
+            >
+          </li>
+        </ul>
+
+        <p>
+          As we can see from the table above, there's not really a better entry point that would trigger with web and
+          celery workers, but not with management commands or scripts. So we're back at square one 😩.
+        </p>
+
+        <h2>Attempt 2: detecting if we're running in a shell 🐌</h2>
+
+        <p>
+          My second idea was to keep the initialization code in <code>settings.py</code>, but only execute it if we were
+          not running in a shell. So how do you check which management command you're running? As is often the case,
+          when I have a weird Django question there's a blog article by Adam Johnson that has exactly the answer I want.
+          This time was no different:
+          <a href="https://adamj.eu/tech/2020/05/14/how-to-check-the-running-django-command/"
+            >How to Check the Running Django Command</a
+          >.
+        </p>
+
+        <p>So followings Adam's advice, here's what we end up with:</p>
+
+        <pre><code>import sys
+import sentry_sdk
+...
+if sys.argv[1:2] != ["shell"]:
+    sentry_sdk.init(...)</code></pre>
+
+        <p>Now we're getting somewhere!</p>
+
+        <table>
+          <thead>
+            <tr>
+              <th></th>
+              <th><code>sys.argv[1:2] != ["shell"]</code></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th>Web</th>
+              <td>✅</td>
+            </tr>
+            <tr>
+              <th>Celery worker</th>
+              <td>✅</td>
+            </tr>
+            <tr>
+              <th><code>./manage.py shell</code></th>
+              <td>❌</td>
+            </tr>
+            <tr>
+              <th>Management command (anything else)</th>
+              <td>✅</td>
+            </tr>
+            <tr>
+              <th>Python script</th>
+              <td>✅</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p>
+          We haven't reached perfection yet though. One issue for example is that some of my colleagues like to use the
+          <code>shell_plus</code> command from
+          <a href="https://django-extensions.readthedocs.io/en/latest/shell_plus.html">django-extensions</a> instead of
+          the plain <code>shell</code>. That means the <code>if</code> needs to be tweaked a bit. And what about other
+          commands? I'm sure that as time goes by I will figure out that more commands need to be excluded and it could
+          get annoying having to maintain a blocklist/allowlist.
+        </p>
+
+        <h2>Attempt 3?</h2>
+
+        <p>
+          To be honest I ended up sticking with option 2. It's not perfect, but the limitations seemed acceptable to me
+          and it was a net improvement compared to what we had before.
+        </p>
+
+        <p>
+          If you've run into this issue and found a solution that worked for you please let me know (you can find ways
+          to contact me on <a href="/about.html">my "about" page</a>).
+        </p>
+      </article>
+    </main>
+    <footer class="container">
+      <p>© <strong>Baptiste Mispelon</strong> unless otherwise noted</p>
+      <p>Made with 💖 by a human</p>
+    </footer>
+  </body>
+</html>

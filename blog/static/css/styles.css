@@ -12,6 +12,10 @@
   --header-transparency-overlay: #13171fa0;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 header {
   /* from https://stackoverflow.com/a/62033585 */
   background: linear-gradient(var(--header-transparency-overlay), var(--header-transparency-overlay)),
@@ -55,4 +59,16 @@ body#about figure {
 
 main {
   min-height: 100vh;
+}
+
+.footnotes > li {
+  list-style: none;
+}
+
+[href^="#footnote-"] {
+  text-decoration: none;
+}
+
+[id^="footnote-"]:target {
+  border: var(--pico-border-width) dotted;
 }
