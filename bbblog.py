@@ -4,7 +4,7 @@ Baptiste's Basic Blog engine
 Use ./bbblog.py --help to see all available commands
 """
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from functools import partial
 from pathlib import Path
 import sys
@@ -59,6 +59,19 @@ class Article:
         return card
 
 
+def rewrite_dates(source: str, old_date: date, new_date: date) -> str:
+    """
+    Find instances of `old_date` in the given HTML source and rewrite them to use `new_date`.
+    Return the modified HTML source.
+    """
+    parsed = html.fromstring(source)
+    for node in parsed.xpath(f"//time[@datetime='{old_date.isoformat()}']"):
+        node.attrib["datetime"] = new_date.isoformat()
+        node.text = new_date.strftime("%B %-dth")
+
+    return html.tostring(parsed, pretty_print=True, encoding="unicode")
+
+
 app = typer.Typer()
 
 
@@ -90,6 +103,31 @@ def mkarticle(title: list[str]) -> Path:
     articlepath.write_text(render_template("article.html", **context))
     print(f"Created a new article at {articlepath.relative_to(Path.cwd())}")
     return articlepath
+
+
+
+@app.command()
+def changedate(filepath: Path, newdate: datetime = datetime.now()) -> Path:
+    """
+    Change the date of the given article, return the new path. If no date is
+    given, uses the current date.
+    """
+    newdate: date = newdate.date()  # XXX: typer currently only supports datetime, not date
+
+    datestr, basetitle = filepath.name[:10], filepath.name[10:]
+    articledate = date.fromisoformat(datestr)
+
+    newpath = filepath.parent.parent / str(newdate.year) / f"{newdate.isoformat()}{basetitle}"
+    newcontent = rewrite_dates(filepath.read_text(), articledate, newdate)
+
+    # Create the year directory in case we're changing year
+    newpath.parent.mkdir(parents=True, exist_ok=True)
+
+    filepath.rename(newpath)
+    newpath.write_text(newcontent)
+
+    print(f"Renamed and updated {filepath} -> {newpath}")
+    return newpath
 
 
 if __name__ == '__main__':
