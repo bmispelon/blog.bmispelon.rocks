@@ -44,20 +44,20 @@
         <p>Next up, we have to talk about numbers. What are they and how do we write them down?</p>
 
         <p>
-          A number is a quantity: how many fingers on a typical human hand, how many days in the month of january, how
+          A number is a quantity: how many fingers on a typical human hand, how many days in the month of January, how
           many times the word "pony" appears in the Django source code. To represent those numbers, most places in the
-          world typically uses a base ten system (also called decimal) where a number is written down using a sequence
-          of one or more characters and where those characters are selected from <code>0123456789</code> (we call those
-          "digits"). With this system, our numbers look like this: 10, 31, 235 (that's right, I counted them).
+          world typically use a base ten system (also called decimal) where a number is written down using a sequence of
+          one or more characters and where those characters are selected from <code>0123456789</code> (we call those
+          "digits"). With this system, our numbers look like this: 10, 31, 235 (that's right, I counted them 🐴).
         </p>
 
         <p>
           The base 10 system is quite convenient for us humans and it's no big surprise. It's very likely that this
-          system came to be because of the numbers of fingers most of us have (do you know what the latin word for
+          system came to be because of the numbers of fingers most of us have (do you know what the Latin word for
           "finger" is? <em>digitus</em>). But other than that there's nothing so special about the number 10, and indeed
           there are times when other systems are more convenient. Another such system that's commonly used (especially
-          with computers) is the base 8 one, also called <strong>octal</strong> (the latin word for eight is
-          <em>octō</em>, a root you might recognize from the word octopus).
+          with computers) is the base 8 one, also called <strong>octal</strong> (the Latin word for eight is
+          <em>octō</em>, a root you might recognize from the word octopus 🐙).
         </p>
 
         <p>If you hadn't already understood the joke, maybe you start to see what's going on by now?</p>
@@ -77,21 +77,21 @@ True</code></pre>
         <p>
           So yeah that's it. The joke is that the number twenty five is written as <code>25</code> in the decimal
           system, and as <code>31</code> in the octal system. Hilarious right? Isn't it a fun coincidence that the "dec"
-          in "december" looks like the "dec" in "decimal", and that the same goes for "october" and "octal". Well as it
+          in "December" looks like the "dec" in "decimal", and that the same goes for "October" and "octal". Well as it
           turns out, it's no coincidence at all!
         </p>
 
         <h2>Month names</h2>
 
         <p>
-          If you speak another european language there's a good chance that most english month names are familiar to
+          If you speak another European language there's a good chance that most english month names are familiar to
           you. This is because most languages in Europe (but far from all <a href="#footnote-non-latin-month">*</a>)
-          inherited their month names from latin. Just for fun I used
+          inherited their month names from Latin. Just for fun I used
           <a href="https://gist.github.com/bmispelon/a203f65f9498bef6f997bf0d792126c8"
             >Django's translation machinery</a
           >
-          to get a list of month names in a few different languages (well except for latin since Django doesn't ship
-          with a latin translation ... yet?):
+          to get a list of month names in a few different languages (well except for Latin since Django doesn't ship
+          with a Latin translation ... yet?):
         </p>
 
         <table>
@@ -194,18 +194,18 @@ True</code></pre>
 
         <p id="footnote-non-latin-month">
           <small
-            >* if your language uses non-latin derived month names with some cool meanings and/or etymologies please do
+            >* if your language uses non-Latin derived month names with some cool meanings and/or etymologies please do
             <a href="/contact.html">send them my way</a>!</small
           >
         </p>
 
-        <h2>A 2000 years old off-by-one error</h2>
+        <h2>A 2000 year old off-by-one error</h2>
 
         <p>
-          Alright, so a bunch of european languages use basically the same sets of month names. If you're like me, you
-          might find this interesting but I can also understand that it's not exactly mind blowing. But look at the
-          month names starting from September. Do you nothing a weird pattern? Maybe it helps if I show you the numbers
-          from 1 to 10 in latin?
+          Alright, so a bunch of European languages use basically the same sets of month names. If you're like me, you
+          might find this interesting but I can also understand that it's not exactly mind-blowing. But look at the
+          month names starting from September. Do you notice a weird pattern? Maybe it helps if I show you the numbers
+          from 1 to 10 in Latin?
         </p>
 
         <ol lang="la">
@@ -289,16 +289,16 @@ True</code></pre>
         </table>
 
         <p>
-          Remember the joke that started this post? How "October" looked like "octal" and "December" like "Decimal"?
+          Remember the joke that started this post? How "October" looked like "octal" and "December" like "decimal"?
           Well as it turns out that wasn't a coincidence at all. The name "September" literally means "month number 7",
-          "October" is 8, "November" is 9 and "December" 10. To put in another way, the name of the 9th month of the
+          "October" is 8, "November" is 9 and "December" 10. To put it another way, the name of the 9th month of the
           calendar is "month #7", the 10th is #8, the 11th #9 and the 12th is #10. Lovely isn't it?
         </p>
 
         <p>
-          What happend was that the old roman calendar used to have 10 months, with March being the first one. January
-          and February were added later by a guy called Julius Caesar who even got a month named after him (and who
-          ironically would probably
+          What happened was that the <a href="https://en.wikipedia.org/wiki/Roman_calendar">old Roman calendar</a> used
+          to have 10 months, with March being the first one. January and February were added later by a guy called
+          Julius Caesar who even got a month named after him (and who ironically would probably
           <a href="https://en.wikipedia.org/wiki/Assassination_of_Julius_Caesar">not call March his number 1 month</a>).
           But when they added those new months they didn't really bother reindexing the names and so they kept them even
           though they now were off by two.
