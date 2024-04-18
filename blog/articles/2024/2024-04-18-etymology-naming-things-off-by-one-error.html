@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="/static/css/vendors/pico.min.css" />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <title>Etymology, naming things, and off-by-one errors | Baptiste Mispelon</title>
+  </head>
+  <body>
+    <header class="container">
+      <h1>{# Blog title goes here #}</h1>
+      <nav>
+        <ul>
+          <li><a href="/">./index.html</a></li>
+          <li><a href="/about.html">./about.html</a></li>
+        </ul>
+      </nav>
+    </header>
+    <main class="container">
+      <article>
+        <h1>Etymology, naming things, and off-by-one errors</h1>
+        <aside class="metadata">
+          <p class="metadata-pubdate">
+            <small>Published on <time datetime="2024-04-07">April 18th</time></small>
+          </p>
+        </aside>
+        <p>Have you ever heard of this programming joke?</p>
+
+        <blockquote>
+          <p>- Why can't programmers tell Halloween and Christmas apart?</p>
+          <p>- It's because they think <code>OCT31</code> is the same as <code>DEC25</code></p>
+        </blockquote>
+
+        <h2>Explaining the joke</h2>
+        <p><small>Always a good sign when you have to explain the joke, isn't it?</small></p>
+
+        <p>
+          First off, in case that wasn't obvious: Halloween and Christmas are two holidays that take place on October
+          31st and December 25th respectively.
+        </p>
+
+        <p>Next up, we have to talk about numbers. What are they and how do we write them down?</p>
+
+        <p>
+          A number is a quantity: how many fingers on a typical human hand, how many days in the month of january, how
+          many times the word "pony" appears in the Django source code. To represent those numbers, most places in the
+          world typically uses a base ten system (also called decimal) where a number is written down using a sequence
+          of one or more characters and where those characters are selected from <code>0123456789</code> (we call those
+          "digits"). With this system, our numbers look like this: 10, 31, 235 (that's right, I counted them).
+        </p>
+
+        <p>
+          The base 10 system is quite convenient for us humans and it's no big surprise. It's very likely that this
+          system came to be because of the numbers of fingers most of us have (do you know what the latin word for
+          "finger" is? <em>digitus</em>). But other than that there's nothing so special about the number 10, and indeed
+          there are times when other systems are more convenient. Another such system that's commonly used (especially
+          with computers) is the base 8 one, also called <strong>octal</strong> (the latin word for eight is
+          <em>octō</em>, a root you might recognize from the word octopus).
+        </p>
+
+        <p>If you hadn't already understood the joke, maybe you start to see what's going on by now?</p>
+
+        <p>
+          I won't go into the mathematics too much here (if that's your thing, the
+          <a href="https://en.wikipedia.org/wiki/Positional_notation">Wikipedia article</a> goes pretty deep on the
+          subject), but for our purpose today just know that you can use Python's <code>int()</code> function to convert
+          the representation of a number (<code>str</code>) in any base into an actual number (<code>int</code>).
+        </p>
+
+        <pre><code>&gt;&gt;&gt; DEC25 = int("25", base=10)  # DEC for decimal = base 10
+&gt;&gt;&gt; OCT31 = int("31", base=8)  # OCT for octal = base 8
+&gt;&gt;&gt; DEC25 == OCT31
+True</code></pre>
+
+        <p>
+          So yeah that's it. The joke is that the number twenty five is written as <code>25</code> in the decimal
+          system, and as <code>31</code> in the octal system. Hilarious right? Isn't it a fun coincidence that the "dec"
+          in "december" looks like the "dec" in "decimal", and that the same goes for "october" and "octal". Well as it
+          turns out, it's no coincidence at all!
+        </p>
+
+        <h2>Month names</h2>
+
+        <p>
+          If you speak another european language there's a good chance that most english month names are familiar to
+          you. This is because most languages in Europe (but far from all <a href="#footnote-non-latin-month">*</a>)
+          inherited their month names from latin. Just for fun I used
+          <a href="https://gist.github.com/bmispelon/a203f65f9498bef6f997bf0d792126c8"
+            >Django's translation machinery</a
+          >
+          to get a list of month names in a few different languages (well except for latin since Django doesn't ship
+          with a latin translation ... yet?):
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>English (<code>en</code>)</th>
+              <th>French (<code>fr</code>)</th>
+              <th>Norwegian (<code>nn</code>)</th>
+              <th>Romanian (<code>ro</code>)</th>
+              <th>Latin (<code>la</code>)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td lang="en">January</td>
+              <td lang="fr">janvier</td>
+              <td lang="nn">januar</td>
+              <td lang="ro">Ianuarie</td>
+              <td lang="la">Ianuarius</td>
+            </tr>
+            <tr>
+              <td lang="en">February</td>
+              <td lang="fr">février</td>
+              <td lang="nn">februar</td>
+              <td lang="ro">Februarie</td>
+              <td lang="la">Februarius</td>
+            </tr>
+            <tr>
+              <td lang="en">March</td>
+              <td lang="fr">mars</td>
+              <td lang="nn">mars</td>
+              <td lang="ro">Martie</td>
+              <td lang="la">Martius</td>
+            </tr>
+            <tr>
+              <td lang="en">April</td>
+              <td lang="fr">avril</td>
+              <td lang="nn">april</td>
+              <td lang="ro">Aprilie</td>
+              <td lang="la">Aprilis</td>
+            </tr>
+            <tr>
+              <td lang="en">May</td>
+              <td lang="fr">mai</td>
+              <td lang="nn">mai</td>
+              <td lang="ro">Mai</td>
+              <td lang="la">Maius</td>
+            </tr>
+            <tr>
+              <td lang="en">June</td>
+              <td lang="fr">juin</td>
+              <td lang="nn">juni</td>
+              <td lang="ro">Iunie</td>
+              <td lang="la">Iunius</td>
+            </tr>
+            <tr>
+              <td lang="en">July</td>
+              <td lang="fr">juillet</td>
+              <td lang="nn">juli</td>
+              <td lang="ro">Iulie</td>
+              <td lang="la">Iulius</td>
+            </tr>
+            <tr>
+              <td lang="en">August</td>
+              <td lang="fr">août</td>
+              <td lang="nn">august</td>
+              <td lang="ro">August</td>
+              <td lang="la">Augustus</td>
+            </tr>
+            <tr>
+              <td lang="en">September</td>
+              <td lang="fr">septembre</td>
+              <td lang="nn">september</td>
+              <td lang="ro">Septembrie</td>
+              <td lang="la">September</td>
+            </tr>
+            <tr>
+              <td lang="en">October</td>
+              <td lang="fr">octobre</td>
+              <td lang="nn">oktober</td>
+              <td lang="ro">Octombrie</td>
+              <td lang="la">October</td>
+            </tr>
+            <tr>
+              <td lang="en">November</td>
+              <td lang="fr">novembre</td>
+              <td lang="nn">november</td>
+              <td lang="ro">Noiembrie</td>
+              <td lang="la">November</td>
+            </tr>
+            <tr>
+              <td lang="en">December</td>
+              <td lang="fr">décembre</td>
+              <td lang="nn">desember</td>
+              <td lang="ro">Decembrie</td>
+              <td lang="la">December</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p id="footnote-non-latin-month">
+          <small
+            >* if your language uses non-latin derived month names with some cool meanings and/or etymologies please do
+            <a href="/contact.html">send them my way</a>!</small
+          >
+        </p>
+
+        <h2>A 2000 years old off-by-one error</h2>
+
+        <p>
+          Alright, so a bunch of european languages use basically the same sets of month names. If you're like me, you
+          might find this interesting but I can also understand that it's not exactly mind blowing. But look at the
+          month names starting from September. Do you nothing a weird pattern? Maybe it helps if I show you the numbers
+          from 1 to 10 in latin?
+        </p>
+
+        <ol lang="la">
+          <li>ūnus</li>
+          <li>duo</li>
+          <li>trēs</li>
+          <li>quattuor</li>
+          <li>quīnque</li>
+          <li>sex</li>
+          <li>septem</li>
+          <li>octō</li>
+          <li>novem</li>
+          <li>decem</li>
+        </ol>
+
+        <p>Did that help? No? Well how about if I put those side-by-side with the months?</p>
+
+        <table>
+          <tbody>
+            <tr>
+              <td lang="en">January</td>
+              <td lang="la">Ianuarius</td>
+              <td></td>
+            </tr>
+            <tr>
+              <td lang="en">February</td>
+              <td lang="la">Februarius</td>
+              <td></td>
+            </tr>
+            <tr>
+              <td lang="en">March</td>
+              <td lang="la">Martius</td>
+              <td lang="la">ūnus</td>
+            </tr>
+            <tr>
+              <td lang="en">April</td>
+              <td lang="la">Aprilis</td>
+              <td lang="la">duo</td>
+            </tr>
+            <tr>
+              <td lang="en">May</td>
+              <td lang="la">Maius</td>
+              <td lang="la">trēs</td>
+            </tr>
+            <tr>
+              <td lang="en">June</td>
+              <td lang="la">Iunius</td>
+              <td lang="la">quattuor</td>
+            </tr>
+            <tr>
+              <td lang="en">July</td>
+              <td lang="la">Iulius</td>
+              <td lang="la">quīnque</td>
+            </tr>
+            <tr>
+              <td lang="en">August</td>
+              <td lang="la">Augustus</td>
+              <td lang="la">sex</td>
+            </tr>
+            <tr>
+              <td lang="en">September</td>
+              <td lang="la">September</td>
+              <td lang="la"><strong>septem</strong></td>
+            </tr>
+            <tr>
+              <td lang="en">October</td>
+              <td lang="la">October</td>
+              <td lang="la"><strong>octō</strong></td>
+            </tr>
+            <tr>
+              <td lang="en">November</td>
+              <td lang="la">November</td>
+              <td lang="la"><strong>novem</strong></td>
+            </tr>
+            <tr>
+              <td lang="en">December</td>
+              <td lang="la">December</td>
+              <td lang="la"><strong>decem</strong></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p>
+          Remember the joke that started this post? How "October" looked like "octal" and "December" like "Decimal"?
+          Well as it turns out that wasn't a coincidence at all. The name "September" literally means "month number 7",
+          "October" is 8, "November" is 9 and "December" 10. To put in another way, the name of the 9th month of the
+          calendar is "month #7", the 10th is #8, the 11th #9 and the 12th is #10. Lovely isn't it?
+        </p>
+
+        <p>
+          What happend was that the old roman calendar used to have 10 months, with March being the first one. January
+          and February were added later by a guy called Julius Caesar who even got a month named after him (and who
+          ironically would probably
+          <a href="https://en.wikipedia.org/wiki/Assassination_of_Julius_Caesar">not call March his number 1 month</a>).
+          But when they added those new months they didn't really bother reindexing the names and so they kept them even
+          though they now were off by two.
+        </p>
+
+        <p>
+          It's often said that naming things and off-by-one errors are one of the hardest challenges with programming.
+          Well here we have a great example where a naming issue left to an off-by-two error that's been in production
+          for more than 2000 years. It puts things in perspective doesn't it?
+        </p>
+      </article>
+    </main>
+    <footer class="container">
+      <p>© <strong>Baptiste Mispelon</strong> unless otherwise noted</p>
+      <p>Made with 💖 by a human</p>
+    </footer>
+  </body>
+</html>
