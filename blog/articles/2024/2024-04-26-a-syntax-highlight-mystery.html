@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="/static/css/vendors/pico.min.css" />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <title>A Syntax Highlight Mystery | Baptiste Mispelon</title>
+  </head>
+  <body>
+    <header class="container">
+      <h1>{# Blog title goes here #}</h1>
+      <nav>
+        <ul>
+          <li><a href="/">./index.html</a></li>
+          <li><a href="/about.html">./about.html</a></li>
+        </ul>
+      </nav>
+    </header>
+    <main class="container">
+      <article>
+        <h1>A Syntax Highlight Mystery</h1>
+        <aside class="metadata">
+          <p class="metadata-pubdate">
+            <small>Published on <time datetime="2024-04-26">April 26th</time></small>
+          </p>
+        </aside>
+
+        <p>
+          While writing some documentation for Django today, I noticed something that I thought was a bit weird inside
+          one of the
+          <a
+            href="https://github.com/django/django/blob/828b94b178736f7882cc6e5cd86b5c8e84b62ece/docs/intro/overview.txt#L73-L80"
+            >code samples</a
+          >. Can you spot it?
+        </p>
+
+        <pre><code>.. code-block:: pycon
+
+    # Import the models we created from our "news" app
+    &gt;&gt;&gt; from news.models import Article, Reporter
+
+    # No reporters are in the system yet.
+    >>> Reporter.objects.all()
+    &lt;QuerySet []&gt;</code></pre>
+
+        <p>
+          I must have scrolled past that section a bunch of times and never noticed it, but once I saw it I couldn't
+          un-see it and it really puzzled me.
+        </p>
+
+        <pre><code>.. code-block:: pycon</code></pre>
+
+        <p>
+          What's that <a href="https://pycon.org/">pycon</a> doing there? Surely whoever wrote that made a funny typo
+          and meant to write <code>python</code>, right? What does a Python conference like Pycon have to do with syntax
+          highlighting? I cobbled together some quick bash commands to count the usage of <code>pycon</code> vs.
+          <code>python</code> in the docs, and to my <del>horror</del> suprise I got the following results:
+        </p>
+
+        <pre><code>$ git grep -Eo "code-block:: py(c|th)on" -- docs/ | cut -d: -f4 | sort | uniq -c
+    959  pycon
+    133  python</code></pre>
+
+        <p>That's almost 10 times more <code>pycon</code>s than <code>python</code>s! What's going on here?</p>
+
+        <p>
+          Luckily I just happened to be in a
+          <a href="https://micro.webology.dev/2024/04/24/office-hours-on.html">zoom call with some smart people</a> at
+          the time, and one of them quickly figured out that "pycon" stands for <strong>py</strong>thon
+          <strong>con</strong>sole in that context. And indeed, all those code blocks using
+          <code>code-block:: pycon</code> are examples of how things look like in a Python console, whereas
+          <code>code-block:: python</code> is used for actual code samples (the ones you'd put in a
+          <code>.py</code> file).
+        </p>
+
+        <p>
+          The authoritative answer came from the documentation for pygments, the library that does the syntax
+          highlighting under the hood. Their <a href="https://pygments.org/docs/lexers/">"Available lexers"</a> page
+          conveniently lists all the languages it knows how to highlight, and a quick control-F on that page quickly
+          reveals that <code>pycon</code> is indeed a "short name" for the <code>PythonConsoleLexer</code> which is
+          used:
+        </p>
+
+        <blockquote cite="https://pygments.org/docs/lexers/#pygments.lexers.python.PythonConsoleLexer">
+          For Python console output or doctests [...]
+        </blockquote>
+
+        <p><strong>Mystery solved!</strong></p>
+
+        <p>
+          Even knowing what <code>pycon</code> is used for now, I still think it's not a great name as I believe most
+          people would not associate it with "python console". So I quickly put together a
+          <a href="https://github.com/pygments/pygments/pull/2697">PR for the pygments project</a> to add an alias for
+          it (I picked <code>python-console</code>). If that PR is accepted, I plan to suggest switching to this alias
+          in Django's documentation.
+        </p>
+      </article>
+    </main>
+    <footer class="container">
+      <p>© <strong>Baptiste Mispelon</strong> unless otherwise noted</p>
+      <p>Made with 💖 by a human</p>
+    </footer>
+  </body>
+</html>
