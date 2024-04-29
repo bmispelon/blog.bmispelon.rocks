@@ -1,0 +1,176 @@
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="/static/css/vendors/pico.min.css" />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <title>Optional subfactories for Factory Boy | Baptiste Mispelon</title>
+  </head>
+  <body>
+    <header class="container">
+      <h1>{# Blog title goes here #}</h1>
+      <nav>
+        <ul>
+          <li><a href="/">./index.html</a></li>
+          <li><a href="/about.html">./about.html</a></li>
+        </ul>
+      </nav>
+    </header>
+    <main class="container">
+      <article>
+        <h1>Optional subfactories for Factory Boy</h1>
+        <aside class="metadata">
+          <p class="metadata-pubdate">
+            <small>Published on <time datetime="2024-05-03">May 3rd</time></small>
+          </p>
+        </aside>
+
+        <p>
+          I often use a library called <a href="https://factoryboy.readthedocs.io/en/stable/">Factory Boy</a> to create
+          Django models in my tests. It works fine and I mostly like it but there's one thing that annoys me when it
+          comes to nullable foreign keys on Django models. Let's set up some example models to explain:
+        </p>
+
+        <pre><code>from django.db import models
+
+class Author(models.Model):
+    name = models.CharField(max_length=100)
+    email = models.EmailField(required=False)
+
+
+class Article(models.Model):
+    author = models.ForeignKey("Author", on_delete=models.CASCADE, blank=True, null=True)
+    title = models.CharField(max_length=100)</code></pre>
+
+        <p>
+          Nothing extraordinary here, just two models linked by an optional foreign key. With Factory Boy (whose
+          importable module is called <code>factory</code> for some reason), you create <code>Factory</code> classes for
+          your models, and a foreign key relationship is typically represented using a <code>SubFactory</code> like so:
+        </p>
+        <pre><code>from factory.django import DjangoModelFactory
+from factory import SubFactory
+
+from .models import Article, Author
+
+class AuthorFactory(DjangoModelFactory):
+    class Meta:
+        model = Author
+
+
+class ArticleFactory(DjangoModelFactory):
+    author = SubFactory(Author)
+
+    class Meta:
+        model = Article</code></pre>
+
+        <p>
+          That works great, and when you have those factories you can easily create two related instances in a single
+          call to the factory:
+        </p>
+
+        <pre><code>&gt;&gt;&gt; article = ArticleFactory.create(title="Test Article", author__name="Baptiste")
+&gt;&gt;&gt; article.author is None
+False
+&gt;&gt;&gt; article.author.name
+'Baptiste'</code></pre>
+
+        <p>
+          So far so expected. But a <code>SubFactory</code> is not "smart" enough to know that the foreign key is
+          optional, and it will <strong>always</strong> created a related object, even if you don't ask for one:
+        </p>
+
+        <pre><code>&gt;&gt;&gt; article = ArticleFactory.create(title="Test Article")
+&gt;&gt;&gt; article.author is None
+False
+&gt;&gt;&gt; article.author.name
+''</code></pre>
+
+        <p>
+          I'm not a big fan of this behavior, because I find it creates too many objects and often makes my tests more
+          verbose than I'd like. Looking for a solution, I soon found a
+          <a href="https://github.com/FactoryBoy/factory_boy/issues/900">closed issue</a> on github where the library
+          author suggests using something called a <code>Trait</code>. But to be honest I never fully understood what
+          traits were, and I always thought there had to be a simpler way.
+        </p>
+
+        <p>
+          After some hours of reading the code of the library and trying out several approaches, I ended up with
+          something which I think works pretty well:
+        </p>
+
+        <pre><code>from factory.django import DjangoModelFactory
+from factory import SubFactory
+
+from .models import Article, Author
+
+
+class OptionalSubFactory(SubFactory):
+    def __init__(self, factory, **defaults):
+        super().__init__(factory)
+        self.defaults = defaults
+
+    def evaluate(self, instance, step, extra):
+        if not extra:
+            return None
+        kwargs = {**self.defaults, **extra}
+        return super().evaluate(instance, step, kwargs)
+
+
+class AuthorFactory(DjangoModelFactory):
+    class Meta:
+        model = Author
+
+
+class ArticleFactory(DjangoModelFactory):
+    author = OptionalSubFactory(Author)
+
+    class Meta:
+        model = Article</code></pre>
+
+        <p>
+          <small>(In case you wanted to reuse this by any chance, the code in the above block is public domain.)</small>
+        </p>
+
+        <p>
+          With this new <code>OptionalSubFactory</code>, related objects are created when you specify any of their
+          arguments (just like with <code>Factory</code>):
+        </p>
+
+        <pre><code>&gt;&gt;&gt; article = ArticleFactory.create(title="Test Article", author__name="Baptiste")
+&gt;&gt;&gt; article.author is None
+False
+&gt;&gt;&gt; article.author.name
+'Baptiste'</code></pre>
+
+        <p>
+          But if you leave out its arguments, then no object is created and the foreign key is set to <code>None</code>:
+        </p>
+
+        <pre><code>&gt;&gt;&gt; article = ArticleFactory.create(title="Test Article")
+&gt;&gt;&gt; article.author is None
+True
+&gt;&gt;&gt; article.author.name
+Traceback (most recent call last):
+  File "&lt;console&gt;", line 1, in &lt;module&gt;
+AttributeError: 'NoneType' object has no attribute 'name'</code></pre>
+
+        <p>
+          Et voilà! The one downside I found and which I couldn't find a fix for is that you
+          <strong>have to</strong> pass an explicit argument in order to create a related object. In some cases it would
+          be nice to be able to write something like <code>ArticleFactory.create(profile=True)</code> and have the
+          <code>profile</code> subfactory be called with all its default arguments. For now, if I want that behavior I
+          have to do something like:
+        </p>
+
+        <pre><code>&gt;&gt;&gt; ArticleFactory.create(profile=ProfileFactory.create())</code></pre>
+
+        <p>That's a bit annoying, but it's a tradeoff I can live with.</p>
+      </article>
+    </main>
+    <footer class="container">
+      <p>© <strong>Baptiste Mispelon</strong> unless otherwise noted</p>
+      <p>Made with 💖 by a human</p>
+    </footer>
+  </body>
+</html>
