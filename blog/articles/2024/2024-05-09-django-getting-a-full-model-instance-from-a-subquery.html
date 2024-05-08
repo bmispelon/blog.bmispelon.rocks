@@ -1,0 +1,297 @@
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <link rel="stylesheet" href="/static/css/vendors/pico.min.css">
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <link rel="stylesheet" href="/static/css/syntaxhighlight.css">
+    <script type="module" src="/static/js/syntaxlighlight.js"></script>
+    <title>Django: Getting a full model instance from a Subquery | Baptiste Mispelon</title>
+  </head>
+  <body>
+    <header class="container">
+      <h1>{# Blog title goes here #}</h1>
+      <nav>
+        <ul>
+          <li><a href="/">./index.html</a></li>
+          <li><a href="/about.html">./about.html</a></li>
+        </ul>
+      </nav>
+    </header>
+    <main class="container">
+      <article>
+        <h1>Django: Getting a full model instance from a Subquery</h1>
+        <aside class="metadata">
+          <p class="metadata-pubdate">
+            <small>Published on <time datetime="2024-05-09">May 9th</time></small>
+          </p>
+        </aside>
+        <p>
+          This one might be a bit niche, but it took me a bit of trial-and-error and I'm hoping that the technique I
+          describe might be generic enough to be reusable. Who knows, if there's enough interest I could even turn it
+          into a library!
+        </p>
+
+        <h2>Context</h2>
+
+        <p>
+          For a bit of context, my current <code>$DAY_JOB</code> involves a lot of converting hand-written SQL into an
+          equivalent (or near enough) Django ORM version. In particular, I've been building a lot of
+          <a href="https://docs.djangoproject.com/en/stable/ref/models/expressions/#subquery-expressions"><code>Subquery</code> annotations</a>
+          for querysets and I've come up with a useful technique that I wanted to share.
+        </p>
+
+        <p>
+          If you've ever used the ORM's <code>Subquery</code> you might know that it's limited to returning a single
+          column, but I've figured out a technique that lets me get full model instances out of a single subquery. In
+          order for me to explain I think it's easier if I start small and build things up. So first things first, let's
+          start with two convenient and somewhat realistic models:
+        </p>
+
+        <pre><code>from datetime import date
+
+from django.db import models
+
+class Book(models.Model):
+    title = models.CharField(max_length=100)
+    rating = models.IntegerField(blank=True, null=True)
+    published = models.DateField(default=date.today)
+
+
+class Person(models.Model):
+    name = models.CharField(max_length=100)
+    birth = models.DateField(default=date.today)</code></pre>
+
+        <p>
+          For the sake of this example, let's say I want to get a queryset of <code>Person</code> instances, and for
+          every person I want to get the most popular book published the year they were born. I know, I know, it's a
+          little contrived but that's the best I could come up with, so please bear with me.
+        </p>
+
+        <h2>Attempt #1: Using <code>Subquery</code>
+</h2>
+
+        <p>
+          For our first attempt, let's start by creating a custom queryset class for our <code>Person</code> model, with
+          a custom <code>with_book()</code> method that annotates the queryset with the information we want:
+        </p>
+
+        <pre><code>from django.db.models.functions import ExtractYear
+
+class PersonQuerySet(models.QuerySet):
+    def with_book(self):
+        """
+        Annotate each person in the queryset with the best rated book of the
+        year they were born.
+        """
+        year = ExtractYear(models.OuterRef("birth"))
+        all_books = Book.objects.filter(published__year=year).order_by("-rating")
+        best_book = models.Subquery(all_books.values("title")[:1])
+        return self.annotate(book=best_book)
+
+
+class Person(models.Model):
+    ...  # same fields as before (name and birth)
+    objects = PersonQuerySet.as_manager()</code></pre>
+
+        <p>
+          Now when we do <code>Person.objects.with_book()</code> each instance in the resulting queryset will have a
+          <code>book</code> attribute containing the title of the best rated book published the year that person was
+          born (or <code>None</code> if no books were published that year). That's a pretty standard use of
+          <code>Subquery</code> so far, and it works great. But what if we wanted to get both the book's title
+          <strong>AND</strong> its rating for example? If you're like me, you might try to simply add the extra field to
+          the subquery, like so:
+        </p>
+
+        <pre><code>best_book = Subquery(all_books.values("title", "rating")[:1])</code></pre>
+
+        <p>
+          But unfortunately, that doesn't work. Django's <code>Suquery</code> can only deal with a single column as far
+          as I can tell.
+        </p>
+
+        <h2>Attempt #2: JSON to the rescue</h2>
+
+        <p>
+          This is where I had my first <del>brilliant</del> devious idea. How do you turn two values into a single one?
+          You stuff them both into a JSON object of course!
+        </p>
+
+        <pre><code>from django.db.models.functions import ExtractYear, JSONObject
+
+class PersonQuerySet(models.QuerySet):
+    def with_book(self):
+        """
+        Annotate each person in the queryset with the best rated book of the
+        year they were born.
+        """
+        year = ExtractYear(models.OuterRef("birth"))
+        all_books = Book.objects.filter(published__year=year).order_by("-rating")
+        json_obj = JSONObject(title="title", rating="rating")
+        best_book = models.Subquery(all_books.values_list(json_obj)[:1])
+        return self.annotate(book=best_book)</code></pre>
+
+        <p>
+          Now all my <code>Person</code> instances are annotated with a <code>book</code> attribute that contains a
+          dictionnary with two keys: <code>title</code> and <code>rating</code>. Amazing! But wait I hear you say, why
+          stop only at those two fields? You can easily stuff <strong>everything</strong> in there, can't you?
+        </p>
+
+        <p>You sure can:</p>
+
+        <pre><code>json_obj = models.JSONObject(id="id", title="title", rating="rating", published="published")</code></pre>
+
+        <p>
+          Works like a charm. Well for some definition of "charm" anyways. JSON only supports a limited number of types
+          and in particular it does not do dates so our <code>published</code> field is returned as a string. That's
+          annoying I guess, but not the end of the world right? Turns out that's fixable but it takes a bit of work,
+          I'll get to it a bit later.
+        </p>
+
+        <p>
+          For now, let's fix something that's easy. If you're like me you might have found it annoying having to list
+          all the fields twice. There's gotta be a better way, and indeed that's where the <code>Model._meta</code> API
+          comes to the rescue:
+        </p>
+
+        <pre><code>json_obj = JSONObject(**{f.name: f.name for f in Book._meta.get_fields()})</code></pre>
+
+        <p>
+          This has all the same limitations as before, but at least it's shorter and it's easily adatable to another
+          model. But what if I told you we could do better? I did after all promise actual model instances in the intro,
+          not just dictionaries.
+        </p>
+
+        <h2>Attempt #3: JSON + custom output field</h2>
+
+        <p>
+          I often think of the ORM (and various parts of Django actually) in terms of layers. One layer is my database
+          with its tables, columns, and rows. At the other end there's the Django model layer with Python objects and
+          attributes with rich data types. The trick then becomes finding the right class and the right methods that
+          sits between those layers and that lets me convert things from one layer to another.
+        </p>
+
+        <p>
+          With the ORM, this class is often the <code>models.Field</code> and its various subclasses. They're the ones
+          who "know" how to convert from a database column type into an appropriate Python type. And if you've spent any
+          time with Django's database functions you've probably had to sprinkle some
+          <code>output_field=SomeDjangoModelField()</code> to get things working.
+        </p>
+
+        <p>
+          And it turns out that <code>output_field</code> is the answer to our current problem as well. The idea is to
+          create a custom field class that can convert the JSON object returned by the database (containing a key/value
+          pair for each field of the model) into a model instance:
+        </p>
+
+        <pre><code>class BookJSONModelField(models.JSONField):
+    """
+    Instantiate an actual Book instance from a JSON object containing its fields.
+    """
+    def from_db_value(self, value, expression, connection):
+        value = super().from_db_value(value, expression, connection)
+        # at this point, value is a dict with one key/value pair per field
+        return Book(**value)</code></pre>
+
+        <p>With this new field, all we need to do is plug it in the <code>Subquery</code> call like so:</p>
+
+        <pre><code>best_book = models.Subquery(all_books.values_list(json_obj)[:1], output_field=BookJSONModelField())</code></pre>
+
+        <p>
+          And voilà, now our <code>book</code> annotation on the queryset gives actual model instances! Neat, right?
+          There are still a few limitations though. The big one is that we still haven't solved the issue with JSON
+          having a limited number of types: even though we do get a <code>Book</code> instance, if we look at
+          <code>book.published</code> then we see it's still a string and not a date object.
+        </p>
+
+        <p>
+          Luckily that's not too hard to solve. Remember when I said fields were the one that could convert between data
+          types? Turns out all fields have a nifty <code>to_python()</code> method that will do the conversion for us:
+        </p>
+
+        <pre><code>def from_db_value(self, value, expression, connection):
+    value = super().from_db_value(value, expression, connection)
+    # at this point, value is a dict with one key/value pair per field
+    return Book(**{k: Book._meta.get_field(k).to_python(v) for k, v in value.items()})</code></pre>
+
+        <p>
+          So there we have it. Just like I promised: a <code>Subquery</code> that returns actual model instances. I hope
+          you found the journey interesting and that you learned something from it.
+        </p>
+
+        <h2>Possible further improvements</h2>
+
+        <p>
+          This technique is of course not perfect, and I'm not even sure it's very useful outside of some very specific
+          situations (though if you do end up using it <a href="/about.html">please do let me know</a>).
+        </p>
+
+        <p>
+          One feature that could be pretty neat would be to support <code>ForeignKey</code> fields via some kind of
+          recursive JSON structure. I haven't tried to implement that but I think it should be doable without too much
+          trouble (<em>famous last words</em>)
+        </p>
+
+        <p>
+          It could also be cool to not have to load all the fields in the JSON object, and mark missing fields as
+          <a href="https://docs.djangoproject.com/en/stable/ref/models/querysets/#defer">deferred</a> so they're loaded
+          automatically from the db when accessed on the instance. I've actually implemented a proof of concept of this
+          one and it was suprisingly easy (I've left it as an exercise to the reader 😃).
+        </p>
+
+        <p>What do you think? Is that something that would be worth packaging up into a 3rd-party library?</p>
+
+        <hr>
+        <p>For ease of copy-pasting, here's how it looks like all put together:</p>
+
+        <pre id="tldr"><code>from datetime import date
+
+from django.db import models
+from django.db.models.functions import ExtractYear, JSONObject
+
+
+class BookJSONModelField(models.JSONField):
+    """
+    Instantiate an actual Book instance from a JSON object containing its fields.
+    """
+    def from_db_value(self, value, expression, connection):
+        value = super().from_db_value(value, expression, connection)
+        # at this point, value is a dict with one key/value pair per field
+        return Book(**{k: Book._meta.get_field(k).to_python(v) for k, v in value.items()})
+
+
+class PersonQuerySet(models.QuerySet):
+    def with_book(self):
+        """
+        Annotate each person in the queryset with the best rated book of the
+        year they were born.
+        """
+        year = ExtractYear(models.OuterRef("birth"))
+        all_books = Book.objects.filter(published__year=year).order_by("-rating")
+        json_obj = JSONObject(**{f.name: f.name for f in Book._meta.get_fields()})
+        best_book = models.Subquery(all_books.values_list(json_obj)[:1], output_field=BookJSONModelField())
+        return self.annotate(book=best_book)
+
+
+class Book(models.Model):
+    title = models.CharField(max_length=100)
+    rating = models.IntegerField(blank=True, null=True)
+    published = models.DateField(default=date.today)
+
+
+class Person(models.Model):
+    name = models.CharField(max_length=100)
+    birth = models.DateField(default=date.today)
+
+    objects = PersonQuerySet.as_manager()</code></pre>
+
+        <p><small>(the above snippet is in the public domain, feel free to adapt/reuse it)</small></p>
+      </article>
+    </main>
+    <footer class="container">
+      <p>© <strong>Baptiste Mispelon</strong> unless otherwise noted</p>
+      <p>Made with 💖 by a human</p>
+    </footer>
+  </body>
+</html>
