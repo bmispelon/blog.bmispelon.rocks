@@ -91,7 +91,7 @@ def mkarticle(title: list[str]) -> Path:
     Create an article stub file in the blog/articles directory
     """
     TODAY = date.today()
-    slug = "-".join(map(str.lower, title))
+    slug = "-".join(map(str.lower, title)).replace(":", "")
 
     context = {
         "title": " ".join(title),
