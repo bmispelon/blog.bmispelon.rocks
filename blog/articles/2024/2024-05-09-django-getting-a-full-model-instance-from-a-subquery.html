@@ -108,7 +108,7 @@ class Person(models.Model):
         <pre><code>best_book = Subquery(all_books.values("title", "rating")[:1])</code></pre>
 
         <p>
-          But unfortunately, that doesn't work. Django's <code>Suquery</code> can only deal with a single column as far
+          But unfortunately, that doesn't work. Django's <code>Subquery</code> can only deal with a single column as far
           as I can tell.
         </p>
 
