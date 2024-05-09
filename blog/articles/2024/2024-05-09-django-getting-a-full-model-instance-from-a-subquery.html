@@ -1,11 +1,11 @@
 <html lang="en">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="light dark">
-    <link rel="stylesheet" href="/static/css/vendors/pico.min.css">
-    <link rel="stylesheet" href="/static/css/styles.css">
-    <link rel="stylesheet" href="/static/css/syntaxhighlight.css">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="/static/css/vendors/pico.min.css" />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="stylesheet" href="/static/css/syntaxhighlight.css" />
     <script type="module" src="/static/js/syntaxlighlight.js"></script>
     <title>Django: Getting a full model instance from a Subquery | Baptiste Mispelon</title>
   </head>
@@ -38,7 +38,9 @@
         <p>
           For a bit of context, my current <code>$DAY_JOB</code> involves a lot of converting hand-written SQL into an
           equivalent (or near enough) Django ORM version. In particular, I've been building a lot of
-          <a href="https://docs.djangoproject.com/en/stable/ref/models/expressions/#subquery-expressions"><code>Subquery</code> annotations</a>
+          <a href="https://docs.djangoproject.com/en/stable/ref/models/expressions/#subquery-expressions"
+            ><code>Subquery</code> annotations</a
+          >
           for querysets and I've come up with a useful technique that I wanted to share.
         </p>
 
@@ -69,8 +71,7 @@ class Person(models.Model):
           little contrived but that's the best I could come up with, so please bear with me.
         </p>
 
-        <h2>Attempt #1: Using <code>Subquery</code>
-</h2>
+        <h2>Attempt #1: Using <code>Subquery</code></h2>
 
         <p>
           For our first attempt, let's start by creating a custom queryset class for our <code>Person</code> model, with
@@ -242,7 +243,7 @@ class PersonQuerySet(models.QuerySet):
 
         <p>What do you think? Is that something that would be worth packaging up into a 3rd-party library?</p>
 
-        <hr>
+        <hr />
         <p>For ease of copy-pasting, here's how it looks like all put together:</p>
 
         <pre id="tldr"><code>from datetime import date
