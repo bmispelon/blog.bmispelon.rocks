@@ -5,14 +5,17 @@ Use ./bbblog.py --help to see all available commands
 """
 from dataclasses import dataclass
 from datetime import date, datetime
-from functools import partial
+from functools import partial, wraps
+from io import StringIO
 from pathlib import Path
 import random
 import sys
+import subprocess
 import textwrap
 
 from jinja2 import Environment, PackageLoader
 from lxml import html
+from lxml.etree import _ElementTree
 import typer
 
 
@@ -31,13 +34,40 @@ def _xpath(tree, xpath:str):
     return found
 
 
+def _prettier_html(source: str) -> str:
+    # using --stdin-filepath with a fake .html filename seems to better match
+    # the behavior of prettier -w so we use that instead of manually specifying
+    # --parser html.
+    return subprocess.check_output(
+        ["prettier", "--stdin-filepath", "test.html"],
+        input=(source),
+        text=True,
+    )
+
+
 def _prettyprint_html(tree):
-    return html.tostring(
+    source = html.tostring(
         tree,
         pretty_print=True,
         encoding="unicode",
-        doctype="<!doctype html>"
+        doctype="<!doctype html>",
     )
+    return _prettier_html(source)
+
+
+def autohtml(fn):
+    """
+    A decorator for functions that take parsed HTML on the way in and modify it.
+    The incoming HTML will be automatically parsed, the resulting tree will be
+    passed to the original function then serialized back into a str on the way out.
+    """
+    @wraps(fn)
+    def decorated(source:str, *args, **kwargs) -> str:
+        parsed = html.fromstring(source)
+        fn(parsed, *args, **kwargs)
+        return _prettyprint_html(parsed)
+
+    return decorated
 
 
 def get_random_header_variant():
@@ -77,7 +107,8 @@ class Article:
         return card
 
 
-def rewrite_dates(source: str, old_date: date, new_date: date) -> str:
+@autohtml
+def rewrite_dates(parsed: _ElementTree, old_date: date, new_date: date):
     """
     Find instances of `old_date` in the given HTML source and rewrite them to use `new_date`.
     Return the modified HTML source.
@@ -87,18 +118,15 @@ def rewrite_dates(source: str, old_date: date, new_date: date) -> str:
         node.attrib["datetime"] = new_date.isoformat()
         node.text = new_date.strftime("%B %-dth")
 
-    return _prettyprint_html(parsed)
 
-
-def rewrite_header_class(source: str, new_header_class) -> str:
+@autohtml
+def rewrite_header_class(parsed: _ElementTree, new_header_class):
     """
     Replace the class of the <header> in the given source and return the new
     source.
     """
-    parsed = html.fromstring(source)
     header = _xpath(parsed, "//body/header")
     header.attrib["class"] = new_header_class
-    return _prettyprint_html(parsed)
 
 
 app = typer.Typer()
@@ -156,7 +184,6 @@ def changedate(filepath: Path, newdate: datetime = datetime.now()) -> Path:
     newpath.write_text(newcontent)
 
     print(f"Renamed and updated {filepath} -> {newpath}")
-    print("Make sure you run `just prettier` to reformat it")
     return newpath
 
 
