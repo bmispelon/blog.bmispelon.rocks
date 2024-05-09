@@ -58,21 +58,21 @@ print()</code></pre>
             <a href="https://docs.python.org/3/library/functions.html#ord"><code>ord()</code></a> to get a character's
             id:
           </p>
-          <pre><code>>>> ord("B")
+          <pre><code>&gt;&gt;&gt; ord("B")
 66
->>> ord("€")
+&gt;&gt;&gt; ord("€")
 8364
->>> ord("🐍")
+&gt;&gt;&gt; ord("🐍")
 128013</code></pre>
           <p>
             To get a character when you have its id, you use the
             <a href="https://docs.python.org/3/library/functions.html#chr"><code>chr()</code></a> builtin function:
           </p>
-          <pre><code>>>> chr(66)
+          <pre><code>&gt;&gt;&gt; chr(66)
 'B'
->>> chr(8364)
+&gt;&gt;&gt; chr(8364)
 '€'
->>> chr(128013)
+&gt;&gt;&gt; chr(128013)
 '🐍'</code></pre>
           <p>
             But characters don't just have a standard id in unicode, they also have a standard <em>name</em>, and that's
@@ -86,17 +86,17 @@ print()</code></pre>
             >. It's part of the standard library and doesn't need to be installed, so you can import it anywhere you
             have Python installed and try it out:
           </p>
-          <pre><code>>>> import unicodedata
->>> unicodedata.name("B")
+          <pre><code>&gt;&gt;&gt; import unicodedata
+&gt;&gt;&gt; unicodedata.name("B")
 'LATIN CAPITAL LETTER B'
->>> unicodedata.name("€")
+&gt;&gt;&gt; unicodedata.name("€")
 'EURO SIGN'
->>> unicodedata.name("🐍")
+&gt;&gt;&gt; unicodedata.name("🐍")
 'SNAKE'</code></pre>
           <p>
             For some extra fun, you can try the following (some of the examples are sneaky so make sure you copy/paste):
           </p>
-          <pre><code>unicodedata.name("&")
+          <pre><code>unicodedata.name("&amp;")
 unicodedata.name("А")
 unicodedata.name(" ")
 unicodedata.name("😤")</code></pre>
@@ -113,7 +113,7 @@ unicodedata.name("😤")</code></pre>
             evocative names. In the Unicode database, those symbols are all grouped together and with some basic Python
             code, we can quickly see a list of them:
           </p>
-          <pre><code>>>> for index in range(119552, 119639):
+          <pre><code>&gt;&gt;&gt; for index in range(119552, 119639):
 ...     print(index, unicodedata.name(chr(index)))
 ... 
 119552 MONOGRAM FOR EARTH
