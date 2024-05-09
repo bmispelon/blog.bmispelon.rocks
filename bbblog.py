@@ -129,17 +129,29 @@ def rewrite_header_class(parsed: _ElementTree, new_header_class):
     header.attrib["class"] = new_header_class
 
 
+@autohtml
+def insert_card(parsed: _ElementTree, card: str):
+    card = html.fragment_fromstring(card)
+    card.tail = "\n\n"  # make sure there's a blank line after the card
+    h1 = _xpath(parsed, '//h1[text()="Articles"]')
+    main = h1.getparent()
+    main.insert(main.index(h1) + 1, card)
+
+
 app = typer.Typer()
 
 
 @app.command()
 def mkindex(filepath: Path):
     """
-    Output the HTML for the article's card that will be listed on the index.
+    Add a card for the given article to the index (just after <h1>).
     """
     filepath = filepath.resolve()
     article = Article.frompath(filepath)
-    print(article.as_card(indent=6))
+    index = BLOG_DIR / "index.html"
+    output = insert_card(index.read_text(), article.as_card())
+    index.write_text(output)
+    print(f"Added card for {filepath} to {index}")
 
 
 @app.command()
