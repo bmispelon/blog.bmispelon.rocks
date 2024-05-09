@@ -17,22 +17,57 @@ html {
 }
 
 header {
+  --header-image-jpeg: url("./images/headers/6796_norgesavd.jpeg");
+  --header-image-avif: url("./images/headers/6796_norgesavd.avif");
+  --header-image-webp: url("./images/headers/6796_norgesavd.webp");
+
   /* from https://stackoverflow.com/a/62033585 */
   background: linear-gradient(var(--header-transparency-overlay), var(--header-transparency-overlay)),
-    url("./images/headers/6796_norgesavd.jpeg");
-  /* image-set() for firefox: */
-  background:
-    linear-gradient(var(--header-transparency-overlay), var(--header-transparency-overlay)),
-    -webkit-image-set(url("./images/headers/6796_norgesavd.avif") type("image/avif"), url("./images/headers/6796_norgesavd.webp")
-          type("image/webp"), url("./images/headers/6796_norgesavd.jpeg") type("image/jpeg"));
+    var(--header-image-jpeg);
   /* image-set() for anyone else */
   background: linear-gradient(var(--header-transparency-overlay), var(--header-transparency-overlay)),
     image-set(
-      url("./images/headers/6796_norgesavd.avif") type("image/avif"),
-      url("./images/headers/6796_norgesavd.webp") type("image/webp"),
-      url("./images/headers/6796_norgesavd.jpeg") type("image/jpeg")
+      var(--header-image-avif) type("image/avif"),
+      var(--header-image-webp) type("image/webp"),
+      var(--header-image-jpeg) type("image/jpeg")
     );
   background-position: center;
+}
+
+header.variant1 {
+  --header-image-jpeg: url("./images/headers/11615_trignett_squelet.jpeg");
+  --header-image-avif: url("./images/headers/11615_trignett_squelet.avif");
+  --header-image-webp: url("./images/headers/11615_trignett_squelet.webp");
+}
+header.variant2 {
+  --header-image-jpeg: url("./images/headers/18008_norgesavd.jpeg");
+  --header-image-avif: url("./images/headers/18008_norgesavd.avif");
+  --header-image-webp: url("./images/headers/18008_norgesavd.webp");
+}
+header.variant3 {
+  --header-image-jpeg: url("./images/headers/6187_norge090.jpeg");
+  --header-image-avif: url("./images/headers/6187_norge090.avif");
+  --header-image-webp: url("./images/headers/6187_norge090.webp");
+}
+header.variant4 {
+  --header-image-jpeg: url("./images/headers/6256_norge090.jpeg");
+  --header-image-avif: url("./images/headers/6256_norge090.avif");
+  --header-image-webp: url("./images/headers/6256_norge090.webp");
+}
+header.variant5 {
+  --header-image-jpeg: url("./images/headers/6378_norge166_15.jpeg");
+  --header-image-avif: url("./images/headers/6378_norge166_15.avif");
+  --header-image-webp: url("./images/headers/6378_norge166_15.webp");
+}
+header.variant6 {
+  --header-image-jpeg: url("./images/headers/6796_norgesavd.jpeg");
+  --header-image-avif: url("./images/headers/6796_norgesavd.avif");
+  --header-image-webp: url("./images/headers/6796_norgesavd.webp");
+}
+header.variant7 {
+  --header-image-jpeg: url("./images/headers/700_amt2_bratsberg.jpeg");
+  --header-image-avif: url("./images/headers/700_amt2_bratsberg.avif");
+  --header-image-webp: url("./images/headers/700_amt2_bratsberg.webp");
 }
 
 header,

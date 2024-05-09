@@ -11,7 +11,7 @@
     <title>{{ title }} | Baptiste Mispelon</title>
   </head>
   <body>
-    <header class="container">
+    <header class="container{% if header_variant %} {{ header_variant }}{% endif %}">
       <h1>{% raw %}{# Blog title goes here #}{% endraw %}</h1>
       <nav>
         <ul>
