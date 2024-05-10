@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="/static/css/vendors/pico.min.css" />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="stylesheet" href="/static/css/syntaxhighlight.css" />
+    <script type="module" src="/static/js/syntaxlighlight.js"></script>
+    <title>How emoji flags work | Baptiste Mispelon</title>
+    <script src="/static/js/vendors/alpinejs-3.13.7.min.js" defer></script>
+    <style type="text/css">
+      #demo {}
+      #demo > p {font-size: 8rem; text-align: center;}
+      #demo > fieldset {display: flex; gap: 1rem;}
+      #demog > fieldset > input {flex: 1}
+      .emojiflag {
+        font-size: 10rem;
+        font-family: Avenir,Helvetica,Arial,sans-serif;
+        text-justify: inter-character;
+      }
+      .regional-indicator {font-size: 10rem;}
+      .regional-indicator > span {}
+    </style>
+  </head>
+  <body>
+    <header class="container variant2">
+      <h1>{# Blog title goes here #}</h1>
+      <nav>
+        <ul>
+          <li><a href="/">./index.html</a></li>
+          <li><a href="/about.html">./about.html</a></li>
+        </ul>
+      </nav>
+    </header>
+    <main class="container">
+
+<article>
+  <h1>Emoji flag demo</h1>
+  <aside class="metadata">
+    <p class="metadata-pubdate">
+      <small
+        >Published on <time datetime="">???</time></small
+      >
+    </p>
+  </aside>
+
+  <form id="demo" x-data="{marginpx: 0}">
+    <pre><code>&lt;p&gt;&lt;span>🇳&lt;/span&gt;&lt;span&gt;🇴&lt;/span&gt;&lt;/p&gt;</code></pre>
+    <pre><code x-text="`p > span {margin: ${marginpx}px}`">p > span {margin: 0px}</code></pre>
+    <p><span :style="`margin: ${marginpx}px`">🇳</span><span :style="`margin: ${marginpx}px`">🇴</span></p>
+    <fieldset>
+        <label for="marginpx">Margin:</label>
+        <input type="range" min="-10" max="10" value="0" name="marginpx" x-model="marginpx">
+        <span x-text="marginpx+'px'"></span>
+    </fieldset>
+  </form>
+</article>
+
+    </main>
+    <footer class="container">
+      <p>© <strong>Baptiste Mispelon</strong> unless otherwise noted</p>
+      <p>Made with 💖 by a human</p>
+    </footer>
+  </body>
+</html>
