@@ -55,17 +55,21 @@ def _prettyprint_html(tree):
     return _prettier_html(source)
 
 
-def autohtml(fn):
+def rewrite_html(fn):
     """
-    A decorator for functions that take parsed HTML on the way in and modify it.
-    The incoming HTML will be automatically parsed, the resulting tree will be
-    passed to the original function then serialized back into a str on the way out.
+    A decorator to help write functions that modify a HTML file in place.
+
+    The decorated function should take an ElementTree as a first argument
+    and modify it in place.
+    The decorator will transform that function into a new one that takes in
+    a filepath, reads its content, parses it as HTML, feeds it to the original
+    function, then writes the modified tree back to the file.
     """
     @wraps(fn)
-    def decorated(source:str, *args, **kwargs) -> str:
-        parsed = html.fromstring(source)
+    def decorated(filepath:Path, *args, **kwargs) -> None:
+        parsed = html.fromstring(filepath.read_text())
         fn(parsed, *args, **kwargs)
-        return _prettyprint_html(parsed)
+        filepath.write_text(_prettyprint_html(parsed))
 
     return decorated
 
@@ -107,19 +111,18 @@ class Article:
         return card
 
 
-@autohtml
+@rewrite_html
 def rewrite_dates(parsed: _ElementTree, old_date: date, new_date: date):
     """
     Find instances of `old_date` in the given HTML source and rewrite them to use `new_date`.
     Return the modified HTML source.
     """
-    parsed = html.fromstring(source)
     for node in parsed.xpath(f"//time[@datetime='{old_date.isoformat()}']"):
         node.attrib["datetime"] = new_date.isoformat()
         node.text = new_date.strftime("%B %-dth")
 
 
-@autohtml
+@rewrite_html
 def rewrite_header_class(parsed: _ElementTree, new_header_class):
     """
     Replace the class of the <header> in the given source and return the new
@@ -129,7 +132,7 @@ def rewrite_header_class(parsed: _ElementTree, new_header_class):
     header.attrib["class"] = new_header_class
 
 
-@autohtml
+@rewrite_html
 def insert_card(parsed: _ElementTree, card: str):
     card = html.fragment_fromstring(card)
     card.tail = "\n\n"  # make sure there's a blank line after the card
@@ -149,8 +152,7 @@ def mkindex(filepath: Path):
     filepath = filepath.resolve()
     article = Article.frompath(filepath)
     index = BLOG_DIR / "index.html"
-    output = insert_card(index.read_text(), article.as_card())
-    index.write_text(output)
+    insert_card(index, article.as_card())
     print(f"Added card for {filepath} to {index}")
 
 
@@ -187,13 +189,12 @@ def changedate(filepath: Path, newdate: datetime = datetime.now()) -> Path:
     articledate = date.fromisoformat(datestr)
 
     newpath = filepath.parent.parent / str(newdate.year) / f"{newdate.isoformat()}{basetitle}"
-    newcontent = rewrite_dates(filepath.read_text(), articledate, newdate)
 
     # Create the year directory in case we're changing year
     newpath.parent.mkdir(parents=True, exist_ok=True)
 
     filepath.rename(newpath)
-    newpath.write_text(newcontent)
+    rewrite_dates(newpath, articledate, newdate)
 
     print(f"Renamed and updated {filepath} -> {newpath}")
     return newpath
@@ -206,9 +207,7 @@ def randomizeheader(filepaths: list[Path]):
     """
     for filepath in filepaths:
         variant = get_random_header_variant()
-        old_source = filepath.read_text()
-        new_source = rewrite_header_class(old_source, f"container {variant}")
-        filepath.write_text(new_source)
+        rewrite_header_class(filepath, f"container {variant}")
         print(f"File {filepath} got new variant {variant}")
 
 
