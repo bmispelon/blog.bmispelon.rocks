@@ -12,16 +12,19 @@
     <script src="/static/js/vendors/alpinejs-3.13.7.min.js" defer></script>
     <style type="text/css">
       #demo {}
-      #demo > p {font-size: 8rem; text-align: center;}
+      #demo > p {font-size: 8rem}
+      #demo > p {display: flex;}
+      #demo > p > span {}
       #demo > fieldset {display: flex; gap: 1rem;}
       #demog > fieldset > input {flex: 1}
-      .emojiflag {
-        font-size: 10rem;
-        font-family: Avenir,Helvetica,Arial,sans-serif;
-        text-justify: inter-character;
-      }
       .regional-indicator {font-size: 10rem;}
       .regional-indicator > span {}
+      .asdf {font-size: 5rem;}
+      .asdf::first-letter {text-decoration: underline; margin-right: 2rem; font-size: 8rem; border: 1px solid lime;}
+      .blank::before {content: "🇳"}
+      .blank::after {content: "🇴"}
+      .beforeafter .after::after{content: "🇳"}
+      .beforeafter .before::before{content: "🇴"}
     </style>
   </head>
   <body>
@@ -46,14 +49,36 @@
     </p>
   </aside>
 
-  <form id="demo" x-data="{marginpx: 0}">
-    <pre><code>&lt;p&gt;&lt;span>🇳&lt;/span&gt;&lt;span&gt;🇴&lt;/span&gt;&lt;/p&gt;</code></pre>
-    <pre><code x-text="`p > span {margin: ${marginpx}px}`">p > span {margin: 0px}</code></pre>
-    <p><span :style="`margin: ${marginpx}px`">🇳</span><span :style="`margin: ${marginpx}px`">🇴</span></p>
+    <p class="beforeafter">
+      <span class="after">🇳</span><span class="beforee">🇴</span>
+    </p>
+
+https://mastodon.social/@bmispelon/110481451262706049
+"rats live on 🇱🇹  no evil star"[::-1]
+
+English/welsh/... flags (white flag + emoji tags)
+rainbow flag (white flag + ZWJ + rainbow)
+
+  <p class="blank"> </p>
+
+  <p style="font-size:4rem; width:5rem; outline: 1px dotted red">🇳&ZeroWidthSpace;🇴&nbsp;🇳&ZeroWidthSpace;🇴&nbsp;🇳&ZeroWidthSpace;🇴</p>
+
+  <p style="resize: horizontal; font-size:4rem; width:5rem; outline: 1px dotted red">🇳&shy;🇴&nbsp;🇳&shy;🇴&nbsp;🇳&shy;🇴</p>
+  
+  <p class="asdf">🇳🇴 weird</p>
+
+  <form id="demo" x-data="{justifycontent: 'flex-start'}">
+    <p :style="`justify-content: ${justifycontent}`"><span>🇳</span><span>🇴</span></p>
     <fieldset>
-        <label for="marginpx">Margin:</label>
-        <input type="range" min="-10" max="10" value="0" name="marginpx" x-model="marginpx">
-        <span x-text="marginpx+'px'"></span>
+        <label for="displaystyle"><code>justify-content:</code></label>
+        <select x-model="justifycontent">
+<option value="flex-start">flex-start</option>
+<option value="flex-end">flex-end</option>
+<option value="center">center</option>
+<option value="space-around">space-around</option>
+<option value="space-between">space-between</option>
+<option value="space-evenly">space-evenly</option>
+        </select>
     </fieldset>
   </form>
 </article>
