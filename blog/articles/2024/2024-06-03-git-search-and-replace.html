@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="/static/css/vendors/pico.min.css" />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="stylesheet" href="/static/css/syntaxhighlight.css" />
+    <script type="module" src="/static/js/syntaxlighlight.js"></script>
+    <title>Git search and replace | Baptiste Mispelon</title>
+  </head>
+  <body>
+    <header class="container variant4">
+      <h1>{# Blog title goes here #}</h1>
+      <nav>
+        <ul>
+          <li><a href="/">./index.html</a></li>
+          <li><a href="/about.html">./about.html</a></li>
+        </ul>
+      </nav>
+    </header>
+    <main class="container">
+      <article>
+        <h1>Git search and replace</h1>
+        <aside class="metadata">
+          <p class="metadata-pubdate">
+            <small>Published on <time datetime="2024-06-03">June 3rd</time></small>
+          </p>
+        </aside>
+        <p>
+          Here is a technique for doing a search-and-replace inside a git repository. I find myself doing this a few
+          times a year and it's rare enough that I alwasy forget the exact commands. So I thought I'd write it down here
+          for posterity.
+        </p>
+
+        <h2><abbr title="too long; didn't read">TL;DR</abbr></h2>
+
+        <pre><code>git grep -l SEARCH | xargs sed -i s/SEARCH/REPLACE/g</code></pre>
+
+        <p>If you want more details, keep reading.</p>
+
+        <h2>The problem</h2>
+
+        <p>
+          Say you're doing a refactor in your code, or you some major overhaul of your documentation, and you find
+          yourself wanting to do a search and replace across all files in your repository.
+        </p>
+
+        <p>
+          Let's say for example that you've been hard at work developing a cool new web framework called
+          <code>jingo</code> (it stands for "javascript inspired network graph object" in case you were wondering). One
+          day you realize with horror that the name you've chosen is awfully similar to another popular framework. So
+          just to be safe, you decide to rename your project and change its name to <code>flosk</code> ("forward logic
+          object software kit"). Now it's time to update all your code and documentation!
+        </p>
+
+        <h2>My solution</h2>
+
+        <p>
+          I imagine that today's fancy text editors have built-in ways to do these kinds of refactors, but personally I
+          don't use a fancy text editor and I think it's useful to know how to do this "by hand".
+        </p>
+
+        <p>
+          My solution is to break the problem into two parts. First, find all the occurences of the text I want to
+          remove (<code>jingo</code> in my example from earlier), then replace that text with the new one
+          (<code>flosk</code>).
+        </p>
+
+        <h3>Search with <code>git grep ...</code></h3>
+
+        <p>
+          The classic tool for finding text in a series of files is <code>grep</code>, but in this case I will use
+          <code>git grep</code> because it has some useful defaults when dealing with a git repository. In theory all
+          the examples should work using plain <code>grep</code> but might require a bit of extra work.
+        </p>
+
+        <pre><code>git grep jingo</code></pre>
+
+        <p>
+          This will find all occurences of <code>jingo</code> in any file inside the git repository, and show (by
+          default) the name of the file and the line that contains the text.
+        </p>
+
+        <p>
+          I my case I don't want to see the match, just the list of files. That's what the
+          <code>--files-with-match</code> flag is for (<code>-l</code> for short):
+        </p>
+
+        <pre><code>git grep -l jingo</code></pre>
+
+        <h3>Replace with <code>sed</code></h3>
+
+        <p>
+          The classic tool for doing search-and-replace inside a file is the unix utility <code>sed</code>. It's a
+          powerful tool but it can also be a little tricky to use. It has its own mini language to write commands that
+          modify the file you give it in different ways. It calls those commands "expressions", and the first letter of
+          the expression tells you what kind of operation is done. In our case we will use the <code>s</code> command
+          which stands for "substitute". I have also used the <code>d</code> command in the past for deleting specific
+          lines.
+        </p>
+
+        <pre><code> sed 's/jingo/flosk/g' README.txt</code></pre>
+
+        <p>
+          By default, <code>sed</code> will not modify any files you give it. Instead it applies the command you gave it
+          to the file, and shows the modified version leaving the original file intact. For our use case we actually
+          want to modfiy the file, so we need to give <code>sed</code> the <code>--in-place</code> option (<code
+            >-i</code
+          >
+          for short):
+        </p>
+
+        <pre><code> sed -i 's/jingo/flosk/g' README.txt</code></pre>
+
+        <h3>Putting it together with <code>xargs</code></h3>
+
+        <p>
+          We're almost there! With <code>git grep ...</code> we can find the files, and with <code>sed ...</code> we can
+          search/replace inside one file. All we need is to "glue" the two together and run the <code>sed</code> command
+          on each file. One way I like to do it is using the <code>xargs</code> command:
+        </p>
+
+        <pre><code>git grep -l jingo | xargs sed -i 's/jingo/flosk/g'</code></pre>
+
+        <h2>Going a bit further</h2>
+
+        <h3>Dealing with files containing spaces in their names</h3>
+
+        <p>
+          Because of the way <code>xargs</code> works, the command I've shown will break if any of the matched files
+          contains a space in their name. For example if the file is called <code>READ ME.txt</code> then
+          <code>xargs</code> will tell <code>sed</code> to open two files: <code>READ</code> and <code>ME.txt</code>.
+          One solution for this is to tell <code>git grep</code> to use a special character to separate the file names
+          (instead of putting one file name per line), and to tell <code>xargs</code> to use that same character for
+          splitting the list of files names back into individual ones before passing them to <code>sed</code>. The
+          character used is called a "null byte" and is normally not allowed in file names.
+        </p>
+
+        <p>
+          The option is called <code>--null</code> for both <code>git grep</code> and <code>xargs</code>, but
+          unfortunately its short version is not the same with both tools: <code>git grep</code> uses
+          <code>-z</code> while <code>xargs</code> uses <code>-0</code> (a zero).
+        </p>
+
+        <p>Here's how our example looks like now:</p>
+
+        <pre><code>git grep -lz jingo | xargs -0 sed -i 's/jingo/flosk/g'</code></pre>
+
+        <h3>Restricting the target files</h3>
+
+        <p>
+          Because we use <code>git grep</code>, we can use its full power when it comes to targetting specific files
+          (what git calls "<a href="https://git-scm.com/docs/git-grep#Documentation/git-grep.txt-ltpathspecgt82308203"
+            >pathspecs</a
+          >"). For example let's say we only want to target python files:
+        </p>
+
+        <pre><code>git grep -l jingo -- '*.py' | xargs sed -i 's/jingo/flosk/g'</code></pre>
+
+        <h3>More complex search/replace with regular expressions</h3>
+
+        <p>
+          So far we've used fixed strings for both search and replace, but sometimes you need a bit of extra power.
+          Luckily both git and sed have support for regular expressions: git has <code>--extended-regexp</code> while
+          sed has <code>--regexp-extended</code>. It's a bit annoying that they use different names, but luckily the
+          short name of the flag is the same for both: <code>-E</code>.
+        </p>
+
+        <p>
+          As an example, here is how you can replace all instances of both <code>jingo</code> and
+          <code>JINGO</code> with <code>flosk</code>:
+        </p>
+
+        <pre><code>git grep -l -E '(jingo|JINGO)' | xargs sed -i -E 's/(jingo|JINGO)/flosk/g'</code></pre>
+
+        <p>
+          To use capture groups in the replacement sed command, we can use <code>\1</code> (and <code>\2</code>, ... if
+          there is more than one capture group):
+        </p>
+
+        <pre><code>git grep -l -E '(jingo|JINGO)' | xargs sed -i -E 's/(jingo|JINGO)/the framework formerly known as \1/g'</code></pre>
+
+        <hr />
+
+        <p>I hope that helps, happy refactoring!</p>
+      </article>
+    </main>
+    <footer class="container">
+      <p>© <strong>Baptiste Mispelon</strong> unless otherwise noted</p>
+      <p>Made with 💖 by a human</p>
+    </footer>
+  </body>
+</html>
