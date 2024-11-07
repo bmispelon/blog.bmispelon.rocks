@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="/static/css/vendors/pico.min.css" />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="stylesheet" href="/static/css/syntaxhighlight.css" />
+    <script type="module" src="/static/js/syntaxlighlight.js"></script>
+    <title>Find git commits that delete files | Baptiste Mispelon</title>
+  </head>
+  <body>
+    <header class="container variant6">
+      <h1>{# Blog title goes here #}</h1>
+      <nav>
+        <ul>
+          <li><a href="/">./index.html</a></li>
+          <li><a href="/about.html">./about.html</a></li>
+        </ul>
+      </nav>
+    </header>
+    <main class="container">
+      <article>
+        <h1>Find git commits that delete files</h1>
+        <aside class="metadata">
+          <p class="metadata-pubdate">
+            <small>Published on <time datetime="2024-11-07">November 7th</time></small>
+          </p>
+        </aside>
+        <p>
+          While working on a <a href="https://code.djangoproject.com/ticket/35894">Django ticket</a>, I found myself
+          doing some git archeology and learned a new (to) me flag for <code>git log</code> which I thought I'd share.
+        </p>
+        <h2>The problem statement</h2>
+        <p>
+          I wanted to find commits that had removed or renamed a file inside a specific directory (<code>docs/</code> in
+          this case).
+        </p>
+
+        <p>
+          I've been doing git archeology for long enough that I know that when the problem statement starts with "I want
+          to find a commit that ..." then the solution probably involves <code>git log</code> and this time was no
+          different.
+        </p>
+
+        <p>
+          None of my searches were turning up anything interesting, only solutions for "how to find the commit where
+          file X was deleted", so I decided to read through the manual for <code>git log</code>.
+        </p>
+
+        <p>
+          After some trial and error involving <code>--stat</code> and <code>--dirstat</code>, I finally found what I
+          wanted by looking for the word "deleted" inside the man page.
+        </p>
+
+        <h2>The solution: <code>--diff-filter</code></h2>
+
+        <p>Here's the command I ended up with:</p>
+
+        <pre><code>git log --diff-filter=RD --stat -- docs/</code></pre>
+
+        <p>Some explanations:</p>
+        <ul>
+          <li>
+            <code>git log</code> will list commits (all of them by default, in reverse order from newest to oldest);
+          </li>
+          <li>
+            <code>--diff-filter=RD</code> will only list commits that either deleted (<code>D</code>) or renamed
+            (<code>R</code>) a file;
+          </li>
+          <li>
+            <code>--stat</code> will show some statistics on the commit, in that case showing which was was
+            deleted/renamed;
+          </li>
+          <li>
+            finally, <code>-- docs/</code> restricts the commits to those involving files inside the
+            <code>docs/</code> directory.
+          </li>
+        </ul>
+
+        <p>Have fun exploring your git repositories! ⛏️</p>
+      </article>
+    </main>
+    <footer class="container">
+      <p>© <strong>Baptiste Mispelon</strong> unless otherwise noted</p>
+      <p>Made with 💖 by a human</p>
+    </footer>
+  </body>
+</html>
