@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="/static/css/vendors/pico.min.css" />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="stylesheet" href="/static/css/syntaxhighlight.css" />
+    <script type="module" src="/static/js/syntaxlighlight.js"></script>
+    <title>GenericForeignKey Deep Filtering | Baptiste Mispelon</title>
+  </head>
+  <body>
+    <header class="container variant1">
+      <h1>{# Blog title goes here #}</h1>
+      <nav>
+        <ul>
+          <li><a href="/">./index.html</a></li>
+          <li><a href="/about.html">./about.html</a></li>
+        </ul>
+      </nav>
+    </header>
+    <main class="container">
+      <article>
+        <h1>GenericForeignKey Deep Filtering</h1>
+        <aside class="metadata">
+          <p class="metadata-pubdate">
+            <small>Published on <time datetime="2024-11-25">November 25th</time></small>
+          </p>
+        </aside>
+
+        <p>
+          One of the many "batteries" Django comes with is
+          <a
+            href="https://docs.djangoproject.com/en/5.1/ref/contrib/contenttypes/#django.contrib.contenttypes.fields.GenericForeignKey"
+            ><code>GenericForeignKey</code></a
+          >
+          (often shortened to <abbr title="Generic Foreign Key">GFK</abbr>). I'm not necessarily the biggest fan of that
+          particular battery (<small>that might be a topic for another post?</small>), but it's hard to deny that GFKs
+          can enable some pretty nifty use-cases. Recently at work I was tasked with implementing a kind of deep
+          filtering of a model that used a GFK, and came up with a technique that seems generic (<small>hehe</small>)
+          enough to be worth sharing.
+        </p>
+
+        <h2>Quick refresher: regular foreign keys</h2>
+
+        <p>
+          In order to show the limitations of GFKs that led me to create my "deep filtering" technique, let's first
+          start with a quick example involving a regular <code>ForeignKey</code>. I'll go for the classic
+          <code>Book</code> model, this time with a related <code>Review</code> model that will come in handy later.
+        </p>
+
+        <pre><code>from django.db import models
+
+class Book(models.Model):
+    author = models.ForeignKey("auth.User", on_delete=models.CASCADE)
+    title = models.CharField(max_length=200)
+
+
+class Review(models.Model):
+    book = models.ForeignKey(Book, on_delete=models.CASCADE)
+    reviewer = models.ForeignKey("auth.User", on_delete=models.CASCADE)
+    score = models.PositiveIntegerField()</code></pre>
+
+        <p>
+          Now if you want to list all reviews attached to a book whose title contains the word "Django", you can do
+          <code>Review.objects.filter(book__title__icontains="django")</code>. The nifty
+          <code>__</code> double-underscore syntax of Django's ORM enables "jumping" over any foreign key. You can even
+          do it multiple times. <code>Review.objects.filter(book__author__username="baptiste")</code> will list all
+          reviews attached to a book authored by the user <code>bmispelon</code>. Neat!
+        </p>
+
+        <h2>Generic Foreign Keys</h2>
+
+        <p>
+          Whereas a regular foreign key points to a single model class (<small>boring!</small>), a
+          <strong>generic</strong> foreign key can point to <strong>any</strong> model you wish
+          (<small>exciting!</small>). Let's try an example, inspired by the real-life
+          <a href="https://docs.djangoproject.com/en/5.1/ref/contrib/admin/#logentry-objects"><code>LogEntry</code></a>
+          model from Django's admin:
+        </p>
+
+        <pre><code>from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
+from django.db import models
+
+
+class LogEntry(models.Model):
+    timestamp = models.DateTimeField(auto_now_add=True)
+    user = models.ForeignKey("auth.User", on_delete=models.CASCADE)
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.PositiveIntegerField()
+    affected = GenericForeignKey("content_type", "object_id")
+    message = models.TextField()</code></pre>
+
+        <p>
+          The <code>LogEntry</code> model is meant to track events on different objects within our codebase. It has a
+          <code>timestamp</code> to store when the even happened, a <code>user</code> to know who triggered the event, a
+          <code>message</code> where we can store a description of the event, and finally an
+          <code>affected</code> generic foreign key that lets us attach the log entry to any model.
+        </p>
+
+        <h2>"Deep filtering"</h2>
+
+        <p>
+          The problem I was trying to solve was that I wanted to get a list of all log entries that "affected" a given
+          user. This could be because the entry was attached directly to the user instance, but it could also be because
+          it was attached to a book whose author was the user, or a review from the given user, ...
+        </p>
+
+        <p>
+          With a regular foreign key, we could have used <code>__</code> filtering like we showed in the previous
+          section, but that's not possible anymore with a generic foreign key.
+        </p>
+
+        <p>
+          If we restrict the problem to a single model, it becomes easier to solve. Say for example that we want to get
+          all log entries that are attached directly to a given user <code>USER</code> (an instance of the
+          <code>django.contrib.auth.models.User</code> model), we can do:
+        </p>
+
+        <pre><code>LogEntry.objects.filter(affected=USER)</code></pre>
+
+        <p>
+          Though it's a bit more complicated, it's also possible to get all entries that are attached to a book where
+          <code>USER</code> is the author:
+        </p>
+
+        <pre><code>LogEntry.objects.filter(
+    content_type=ContentType.objects.get_for_model(Book),
+    object_id__in=Book.objects.filter(author=USER)
+)</code></pre>
+
+        <p>This approach works also for reviews by <code>USER</code>:</p>
+
+        <pre><code>LogEntry.objects.filter(
+    content_type=ContentType.objects.get_for_model(Review),
+    object_id__in=Review.objects.filter(reviewer=USER)
+)</code></pre>
+
+        <p>Or even getting entries attached to a review for one of <code>USER</code>'s books:</p>
+
+        <pre><code>LogEntry.objects.filter(
+    content_type=ContentType.objects.get_for_model(Review),
+    object_id__in=Review.objects.filter(book__author=USER)
+)</code></pre>
+
+        <h2><code>CASE WHEN</code> to the rescue</h2>
+
+        <p>
+          The idea is to generalize the approach of the last three examples by creating a mapping of model -> Q object,
+          where the Q object is used to filter down the model queryset:
+        </p>
+
+        <pre><code>from django.contrib.auth.models import User
+from django.contrib.contenttypes.models import ContentType
+from django.db.models import BooleanField, Q, Value
+from django.db.models.expressions import Case, When
+
+
+def is_affected(user):
+    Q_OBJS = {
+        Book: Q(author=user),
+        Review: Q(book__author=user) | Q(reviewer=user),
+    }
+
+    whens = [
+        # The entry is directly attached to the user
+        When(content_type=ContentType.objects.get_for_model(User), then=Q(object_id=user.pk))
+    ]
+
+    for model_class, qobj in Q_OBJS.items():
+        content_type = ContentType.objects.get_for_model(model_class)
+        object_ids = model_class.objects.filter(qobj)
+        whens.append(When(content_type=content_type, then=object_id__in=object_ids))
+
+    return Case(*whens, default=Value(False), output_field=BooleanField())</code></pre>
+
+        <p>
+          Now that we have this function, getting a list of log entries that affect <code>USER</code> becomes as simple
+          as:
+        </p>
+
+        <pre><code>LogEntry.objects.filter(is_affected(USER))</code></pre>
+
+        <p><strong>Voilà!</strong></p>
+      </article>
+    </main>
+    <footer class="container">
+      <p>© <strong>Baptiste Mispelon</strong> unless otherwise noted</p>
+      <p>Made with 💖 by a human</p>
+    </footer>
+  </body>
+</html>
