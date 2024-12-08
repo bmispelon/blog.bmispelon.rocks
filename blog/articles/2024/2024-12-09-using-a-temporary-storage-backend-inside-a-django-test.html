@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="/static/css/vendors/pico.min.css" />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="stylesheet" href="/static/css/syntaxhighlight.css" />
+    <script type="module" src="/static/js/syntaxlighlight.js"></script>
+    <title>Using a temporary directory inside a Django test | Baptiste Mispelon</title>
+  </head>
+  <body>
+    <header class="container variant1">
+      <h1>{# Blog title goes here #}</h1>
+      <nav>
+        <ul>
+          <li><a href="/">./index.html</a></li>
+          <li><a href="/about.html">./about.html</a></li>
+        </ul>
+      </nav>
+    </header>
+    <main class="container">
+      <article>
+        <h1>Using a temporary storage backend inside a Django test</h1>
+        <aside class="metadata">
+          <p class="metadata-pubdate">
+            <small>Published on <time datetime="2024-12-09">December 9th</time></small>
+          </p>
+        </aside>
+        <p>
+          Today I ran across an issue involving storages and staticfiles during tests. I was surprised not to find any
+          quick solution online so here's my quick attempt at a solution. First the code, then some explanations:
+        </p>
+        <pre><code>import shutil
+import tempfile
+
+
+class TempDirMediaRootMixin:
+    @classmethod
+    def setUpClass(cls):
+        cls.tmpdir = tempfile.mkdtemp()
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(cls.tmpdir, ignore_errors=True)
+
+    def run(self, result=None):
+        with self.settings(MEDIA_ROOT=self.tmpdir):
+            return super().run(result)</code></pre>
+
+        <h2>The problem</h2>
+        <p>
+          If you've ever worked with files in Django you're probably familiar with
+          <code>settings.MEDIA_ROOT</code> which is the directory on your filesystem where Django will store uploaded
+          files (assuming you're using the default <code>settings.STORAGES</code> and its
+          <code>FileSystemStorage</code> backend).
+        </p>
+
+        <p>
+          However, unlike other settings like <code>settings.DATABASES</code> or <code>settings.EMAIL_*</code> which are
+          treated specially during tests (Django will run tests in a special test database, and will also send emails to
+          a special in-memory email backend during tests), Django will happily reuse your
+          <code>settings.MEDIA_ROOT</code> when running your tests.
+        </p>
+
+        <p>This created two problems for me:</p>
+        <ol>
+          <li>Existing files in <code>MEDIA_ROOT</code> could interfere with the tests;</li>
+          <li>
+            Saving files during tests would clutter the <code>MEDIA_ROOT</code> directory and were not cleaned up after
+            the tests were finished.
+          </li>
+        </ol>
+
+        <h2>My solution</h2>
+        <p>
+          Problem #1 can be solved by using a different <code>MEDIA_ROOT</code> when running tests. Maybe by using a
+          value derived from an environment variable inside the settings file, or by using a different settings module
+          for the tests. Either way, it's a bit annoying and requires modifications to the project's settings file, and
+          maybe a bit of rearchitecturing of the infrastructure (like switching to multiple settings files).
+        </p>
+
+        <p>
+          Problem #2 can be solved by manually deleting our test <code>MEDIA_ROOT</code> directory, but that can get
+          annoying fast (and it's easy to forget).
+        </p>
+
+        <p>
+          What if we could use a temporary directory for our tests, and have it be automatically cleaned once the test
+          is over? Luckily Python has a nice builtin library for that:
+          <a href="https://docs.python.org/3/library/tempfile.html">tempfile</a>!
+        </p>
+
+        <p>
+          Calling <code>tempfile.mkdtemp()</code> returns the name of a directory on the filesystem with a random name
+          (you can use the <code>prefix</code> and <code>suffix</code> arguments to customize the naming of the
+          directory which can be useful when debugging). Once we have a name, all that's left is to tell Django to use
+          that for <code>settings.MEDIA_ROOT</code>.
+        </p>
+
+        <p>
+          This is where
+          <a href="https://docs.python.org/3/library/unittest.html#unittest.TestCase">unittest.TestCase</a>'s extension
+          points come in handy. First, there's <code>setUpClass()</code>: this method will be called once per
+          <code>TestCase</code> (sub)class at the beginning and so is the perfect place to initialize our temporary
+          directory with <code>mkdtemp()</code>.
+        </p>
+
+        <pre><code>class TempDirMediaRootMixin:
+    @classmethod
+    def setUpClass(cls):
+        cls.tmpdir = tempfile.mkdtemp()
+        super().setUpClass()
+
+    ...</code></pre>
+
+        <p>
+          Then there's the corresponding <code>tearDownClass()</code>: this method is also called once per (sub)class
+          but this time at the end and so is the perfect place to have cleanup logic, in this case using
+          <code>shutil.rmtree()</code> to delete our temporary directory.
+        </p>
+
+        <pre><code>class TempDirMediaRootMixin:
+    ...
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(cls.tmpdir, ignore_errors=True)
+
+    ...</code></pre>
+
+        <p>
+          Finally I needed a way to tell Django to use my temporary directory as a value for
+          <code>settings.MEDIA_ROOT</code>. Normally you could decorate either a whole <code>TestCase</code> class or
+          one of its methods with Django's
+          <a href="https://docs.djangoproject.com/en/5.1/topics/testing/tools/#django.test.override_settings"
+            ><code>override_settings(MEDIA_ROOT=...)</code></a
+          >
+          but here we can't do that because the new value of <code>MEDIA_ROOT</code> is dynamic. That's why I opted to
+          use the <code>run()</code> extension point since it allows me to wrap the execution of all the test methods of
+          the class inside a context manager, conveniently using Django's
+          <a href="https://docs.djangoproject.com/en/5.1/topics/testing/tools/#django.test.SimpleTestCase.settings"
+            ><code>self.settings()</code></a
+          >.
+        </p>
+
+        <pre><code>class TempDirMediaRootMixin:
+    ...
+
+    def run(self, result=None):
+        with self.settings(MEDIA_ROOT=self.tmpdir):
+            return super().run(result)</code></pre>
+
+        <h2>Final thoughts</h2>
+
+        <p>
+          One thing I don't like so much with this approach is that there's still some state shared between individual
+          tests on the same test class. That could be fixed by clearing the temporary directory either before every test
+          is run (<code>setUp()</code>) or after (<code>tearDown()</code>), but I would worry about performance (I
+          haven't done any benchmarks though, so maybe that's not actually an issue 🤷🏻).
+        </p>
+
+        <p>
+          I also wonder if this is something that could/should be fixed in Django itself. I found it surprising that
+          Django reused the project's <code>settings.STORAGES</code> during the tests. This is different from what
+          happens with <code>settings.DATABASES</code> or <code>settings.EMAIL_BACKEND</code> where Django swaps the
+          real backends with a different one when running tests. Not sure if there's already a ticket for that. If I
+          ever run out of things to do on my open-source TODO list maybe I'll tackle that one 😆.
+        </p>
+      </article>
+    </main>
+    <footer class="container">
+      <p>© <strong>Baptiste Mispelon</strong> unless otherwise noted</p>
+      <p>Made with 💖 by a human</p>
+    </footer>
+  </body>
+</html>
