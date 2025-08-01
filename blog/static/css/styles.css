@@ -76,6 +76,9 @@ main,
 footer {
   border: 5px solid var(--pico-muted-border-color);
 }
+header.container, footer.container {
+  padding: var(--pico-block-spacing-vertical) var(--pico-block-spacing-horizontal);
+}
 main {
   margin-top: 5px;
   margin-bottom: 5px;
