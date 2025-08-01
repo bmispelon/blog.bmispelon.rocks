@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="/static/css/vendors/pico.min.css" />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="stylesheet" href="/static/css/syntaxhighlight.css" />
+    <script type="module" src="/static/js/syntaxlighlight.js"></script>
+    <title>Wagtail: Annotating the Parent on a Page QuerySet | Baptiste Mispelon</title>
+  </head>
+  <body>
+    <header class="container variant5">
+      <h1>Wagtail: Annotating a Parent Attribute on a Page QuerySet</h1>
+      <nav>
+        <ul>
+          <li><a href="/">./index.html</a></li>
+          <li><a href="/about.html">./about.html</a></li>
+        </ul>
+      </nav>
+    </header>
+    <main class="container">
+      <article>
+        <h1>Wagtail: Annotating a Parent Attribute on a Page QuerySet</h1>
+        <aside class="metadata">
+          <p class="metadata-pubdate">
+            <small>Published on <time datetime="2025-08-01">August 1st</time></small>
+          </p>
+        </aside>
+
+        <p>
+          I've been working on a <a href="https://wagtail.org/">Wagtail</a> project recently where I found myself
+          wanting to filter a queryset of pages based on the property of each row's parent. I found a solution using
+          annotations and Django's database functions which I thought was neat.
+        </p>
+
+        <h2><abbr title="Too Long, Didn't Read">TLDR;</abbr></h2>
+        <pre><code>from django.db.models import OuterRef, Subquery
+from django.db.models.functions import Reverse, Substr
+from wagtail.models import Page
+
+def parent_path(path):
+    """
+    Return a database expression that evaluates to the parent path of the given path.
+    """
+    # Unfortunately Substr doesn't support negative indices which would be ideal
+    # here since the parent path is the child's path minus the last N characters (
+    # where N is the `steplen` which defaults to 4).
+    # So instead we do a reverse-substr-reverse which achieves the same thing.
+    return Reverse(
+        Substr(Reverse(path), 1 + Page.steplen),  # Substr uses 1-index
+    )
+
+
+def parent_field(field_name, queryset=None):
+    """
+    Return a database expression that evaluates to value of the row's parent's given field.
+    """
+    if queryset is None:
+        queryset = Page.objects.all()
+    queryset = queryset.filter(path=parent_path(OuterRef("path")))
+    return Subquery(queryset.values(field_name))</code></pre>
+
+        <p>If that didn't quite make sense, here's some context and some more explanations:</p>
+
+        <h2>Wagtail's Page tree 🌳</h2>
+        <p>
+          One of Wagtail's key piece of code is the <code>Page</code> class. It's a normal Django model with fields like
+          "title" or "publication date", but pages can also be nested under one another.
+        </p>
+        <p>
+          Each page has single parent (except for a special page called a "root page" which has no parent), which
+          creates a tree structure where pages can be nested as deep as you'd like (well, up to a limit but you're
+          unlikely to hit that).
+        </p>
+
+        <h2>MP trees</h2>
+        <p>
+          Wagtail uses django-treebeard's "<a href="https://django-treebeard.readthedocs.io/en/latest/mp_tree.html"
+            >Materialized Path Trees</a
+          >" to make querying the page tree as efficient as possible. It's a fairly complex library, but the key idea is
+          that each <code>Page</code> is given a unique <code>path</code> attribute which is constructed in a clever way
+          that makes navigating the tree easy.
+        </p>
+        <p>
+          A path is a string made of of segments of fixed size (4 characters by default). For example if a path was
+          <code>0001000200030001</code> then its 4 segments would be <code>0001</code>, <code>0002</code>,
+          <code>0003</code>, and <code>0001</code>. When creating a new page, its path is built by taking the parent's
+          path and adding a new segment at the end. So in our example, if we were adding a new page to our
+          <code>0001000200030001</code>, then its path could look something like <code>0001000200030001 0007</code> (I
+          added a space to make it clearer, in practice the segments are all stuck together).
+        </p>
+        <h2>Knowing your parent 🧓🏻</h2>
+        <p>
+          With this system, it becomes very easy to compute the path of a page's parent: all you have to do is remove
+          the last segment from the page's path. In Python it would look like this:
+        </p>
+        <pre><code>parent_path = page.path[:-4]</code></pre>
+        <p>
+          (In practice it's a bit more complicated because the segment length is configurable, but the
+          <a
+            ref="https://github.com/django-treebeard/django-treebeard/blob/777f5082fdb01ddfe1c67a8a80a2ebf2a0fb0055/treebeard/mp_tree.py#L1165-L1170"
+            >real code</a
+          >
+          is not that much more complicated than that really.)
+        </p>
+
+        <h2>Back to the initial problem</h2>
+        <p>
+          If you remember, the issue I was originally trying to solve was to filter a queryset of pages based on the
+          value of the parent's specific field. So I needed a way to somehow join a page to its parent directly in the
+          database.
+        </p>
+        <p>
+          There's many different ways to achieve this, but one way that works well (especially with the Django ORM) is
+          to use a subquery. The plan of attack then becomes:
+        </p>
+        <ol>
+          <li>For each page in the queryset, calculate the parent path using the formula from above;</li>
+          <li>Using a subquery, fetch the parent of each row using the computed path;</li>
+          <li>Once we have the parent, select the field/column we care about;</li>
+          <li>Annotate this new value to the queryset.</li>
+        </ol>
+
+        <h2>Computing the parent path using database functions</h2>
+        <p>
+          Django ships with a very useful collection of
+          <a href="https://docs.djangoproject.com/en/stable/ref/models/database-functions/">database functions</a>. Of
+          particular interest to us on this problem is <code>Substr</code> (short for substring, I'm sure that was worth
+          saving those 3 characters). Using our previous formula, it should be possible to compute a page's parent path
+          using something like <code>Substr("path", -4)</code> but unfortunately that doesn't work for two reasons:
+        </p>
+        <p></p>
+        <ol>
+          <li><code>Substr</code> does not support negative indices 🥹</li>
+          <li><code>Substr</code> indices start at 1, not 0 😭</li>
+        </ol>
+        <p>
+          But that's not going to stop me, and with a bit of faffing about I was able to come up with this function:
+        </p>
+        <pre><code>from django.db.models.functions import Reverse, Substr
+from wagtail.models import Page
+
+def parent_path(path):
+    """
+    Return a database expression that evaluates to the parent path of the given path.
+    """
+    # Unfortunately Substr doesn't support negative indices which would be ideal
+    # here since the parent path is the child's path minus the last N characters (
+    # where N is the `steplen` which defaults to 4).
+    # So instead we do a reverse-substr-reverse which achieves the same thing.
+    return Reverse(
+        Substr(Reverse(path), 1 + Page.steplen),  # Substr uses 1-index
+    )</code></pre>
+
+        <p>
+          Once we have that we're almost there, all that's left is to remember how to use Django's
+          <code>Subquery</code> which I always have to look up somehow:
+        </p>
+        <pre><code># OuterRef essentially means "the field with that name on the outer queryset":
+parent_page = Page.objects.filter(path=parent_path(OuterRef("path")))
+# Let's use title here, but it could be anything:
+parent_title = Subquery(parent_page.values("title"))
+# Now we can annotate and filter:
+original_queryset.annotate(parent_title=parent_title).filter(parent_title=...)</code></pre>
+
+        <p>And voilà, we now have a parent field annotate on our queryset!</p>
+
+        <h2>Conclusion</h2>
+
+        <p>
+          The Django ORM is very powerful, and the database functions it ships really lets you build interesting things.
+          <code>Subquery</code> is also very neat (remember when I used it last year to
+          <a href="/articles/2024/2024-05-09-django-getting-a-full-model-instance-from-a-subquery.html"
+            >build full instances from a subquery</a
+          >, bypassing the 1-column limit?).
+        </p>
+
+        <p>
+          But since you've read all the way to the end, I'll share a little secret with you. On that work project I
+          mentionned where I wrote this code, I ended up scrapping the whole thing after my colleague pointed out during
+          code review that Wagtail already kind of did what I wanted with
+          <a
+            href="https://docs.wagtail.org/en/stable/reference/pages/queryset_reference.html#wagtail.query.PageQuerySet.child_of"
+            ><code>PageQuerySet.child_of()</code></a
+          >, so the real lesson is know your tools, and know when to get rid of your clever code when standard solutions
+          already exist. Oh, and that code reviews are awesome!
+        </p>
+      </article>
+    </main>
+    <footer class="container">
+      <p>© <strong>Baptiste Mispelon</strong> unless otherwise noted</p>
+      <p>Made with 💖 by a human, 100% slop-free guarantee</p>
+    </footer>
+  </body>
+</html>
