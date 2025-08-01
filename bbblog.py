@@ -170,7 +170,9 @@ def mkarticle(title: list[str]) -> Path:
         "header_variant": get_random_header_variant(),
     }
 
-    articlepath = BLOG_DIR / "articles" / str(TODAY.year) / f"{TODAY.isoformat()}-{slug}.html"
+    articledir = BLOG_DIR / "articles" / str(TODAY.year)
+    articledir.mkdir(parents=True, exist_ok=True)
+    articlepath = articledir / f"{TODAY.isoformat()}-{slug}.html"
     assert not articlepath.exists()
     articlepath.write_text(render_template("article.html", **context))
     print(f"Created a new article at {articlepath.relative_to(Path.cwd())}")
