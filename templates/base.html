@@ -4,14 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <link rel="stylesheet" href="/static/css/vendors/pico.min.css" />
+    <link rel="stylesheet" href="/static/css/vendors/pico.classless.min.css" />
     <link rel="stylesheet" href="/static/css/styles.css" />
     <link rel="stylesheet" href="/static/css/syntaxhighlight.css" />
     <script type="module" src="/static/js/syntaxlighlight.js"></script>
     <title>{{ title }} | Baptiste Mispelon</title>
   </head>
   <body>
-    <header class="container{% if header_variant %} {{ header_variant }}{% endif %}">
+    <header{% if header_variant %} class="{{ header_variant }}"{% endif %}>
       <h1>{% raw %}{# Blog title goes here #}{% endraw %}</h1>
       <nav>
         <ul>
@@ -20,10 +20,10 @@
         </ul>
       </nav>
     </header>
-    <main class="container">
+    <main>
 {% block main %}{% endblock %}
     </main>
-    <footer class="container">
+    <footer>
       <p>© <strong>Baptiste Mispelon</strong> unless otherwise noted</p>
       <p>Made with 💖 by a human</p>
     </footer>

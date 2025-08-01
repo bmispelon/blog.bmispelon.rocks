@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <link rel="stylesheet" href="/static/css/vendors/pico.min.css" />
+    <link rel="stylesheet" href="/static/css/vendors/pico.classless.min.css" />
     <link rel="stylesheet" href="/static/css/styles.css" />
     <link rel="stylesheet" href="/static/css/syntaxhighlight.css" />
     <script type="module" src="/static/js/syntaxlighlight.js"></script>
@@ -84,7 +84,7 @@
     </style>
   </head>
   <body>
-    <header class="container variant4">
+    <header class="variant4">
       <h1>{# Blog title goes here #}</h1>
       <nav>
         <ul>
@@ -93,7 +93,7 @@
         </ul>
       </nav>
     </header>
-    <main class="container">
+    <main>
       <article x-data="{opacity: 80, bgcolor: getInitialBgColor()}" x-effect="updateRootCSSProperties($data)">
         <h1>CSS desaturated background image</h1>
         <aside class="metadata">
@@ -255,7 +255,7 @@
 }</code></pre>
       </article>
     </main>
-    <footer class="container">
+    <footer>
       <p>© <strong>Baptiste Mispelon</strong> unless otherwise noted</p>
       <p>Made with 💖 by a human</p>
     </footer>
