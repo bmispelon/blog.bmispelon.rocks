@@ -22,10 +22,11 @@ header {
   --header-image-webp: url("./images/headers/6796_norgesavd.webp");
 
   /* from https://stackoverflow.com/a/62033585 */
-  background: linear-gradient(var(--header-transparency-overlay), var(--header-transparency-overlay)),
-    var(--header-image-jpeg);
+  background:
+    linear-gradient(var(--header-transparency-overlay), var(--header-transparency-overlay)), var(--header-image-jpeg);
   /* image-set() for anyone else */
-  background: linear-gradient(var(--header-transparency-overlay), var(--header-transparency-overlay)),
+  background:
+    linear-gradient(var(--header-transparency-overlay), var(--header-transparency-overlay)),
     image-set(
       var(--header-image-avif) type("image/avif"),
       var(--header-image-webp) type("image/webp"),
