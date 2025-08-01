@@ -29,4 +29,4 @@ headervariants:
 
 # call the blog engine script bbblog.py
 blog *a:
-    python bbblog.py {{a}}
+    uv run bbblog.py {{a}}
