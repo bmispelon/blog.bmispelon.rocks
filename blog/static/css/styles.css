@@ -76,7 +76,8 @@ main,
 footer {
   border: 5px solid var(--pico-muted-border-color);
 }
-body > header, body > footer {
+body > header,
+body > footer {
   padding-inline: var(--pico-block-spacing-horizontal);
   padding-block: var(--pico-block-spacing-vertical);
 }

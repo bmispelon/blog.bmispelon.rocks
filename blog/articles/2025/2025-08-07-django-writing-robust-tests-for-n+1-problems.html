@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="/static/css/vendors/pico.classless.min.css" />
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="stylesheet" href="/static/css/syntaxhighlight.css" />
+    <script type="module" src="/static/js/syntaxlighlight.js"></script>
+    <title>Django: Writing Robust Tests for N+1 Problems | Baptiste Mispelon</title>
+  </head>
+  <body>
+    <header class="variant7">
+      <h1>Django: Writing Robust Tests for N+1 Problems</h1>
+      <nav>
+        <ul>
+          <li><a href="/">./index.html</a></li>
+          <li><a href="/about.html">./about.html</a></li>
+        </ul>
+      </nav>
+    </header>
+    <main>
+      <article>
+        <h1>Django: Writing Robust Tests for N+1 Problems</h1>
+        <aside class="metadata">
+          <p class="metadata-pubdate">
+            <small>Published on <time datetime="2025-08-07">August 7th</time></small>
+          </p>
+        </aside>
+        <h2><abbr title="Too Long, Didn't Read">TLDR;</abbr></h2>
+        <p>
+          For those in a hurry (<small
+            >or more realistically for future me who will want to find this again in 6 months</small
+          >), here's the important bit:
+        </p>
+
+        <pre><code>class BookListViewTestCase(TestCase):
+    def test_view_query_count(self):
+        """
+        Make sure that listing books always triggers the same number of database
+        queries no matter how many books there are.
+        """
+        Book.objects.create(
+            author=Author.objects.create(name="test"),
+            title="test",
+        )
+
+        with CaptureQueriesContext(connection) as ctx:
+            self.client.get("/books/")
+
+        baseline = len(ctx.captured_queries)
+
+        for i in range(10):
+            # Here a tool like factory-boy or model-bakery would really help...
+            Book.objects.create(
+                author=Author.objects.create(name=f"test{i}"),
+                title="test{i}",
+            )
+
+        self.assertNumQueries(baseline):
+            self.client.get("/books/")</code></pre>
+
+        <p>
+          And for anyone else, keep reading for some more in-depth explanations (and thanks for tagging along, I hope
+          you enjoy the ride 🚵🏻).
+        </p>
+
+        <h2>What's the N+1 problem?</h2>
+
+        <p>
+          The term "<em>N+1 problem</em>" refers to an issue that can arise when using an ORM where you end up making
+          more database queries than you should. Typically it happens when you fetch related objects inside a loop,
+          resulting in 1 query for the loop itself, then 1 query per item in the loop. If the loop has
+          <code>N</code> items, that means <code>N+1</code> queries in total, hence the name.
+        </p>
+
+        <p>To show a practical example, let's say we have the following models (very imaginative, I know):</p>
+
+        <pre><code># models.py
+from django.db import models
+
+
+class Author(models.Model):
+    name = models.CharField()
+
+
+class Book(models.Model):
+    author = models.ForeignKey(Author)
+    title = models.CharField()</code></pre>
+
+        <p>Let's also create a simplistic view that returns a list of all books, alongside their author's name:</p>
+
+        <pre><code id="highlightcode"># views.py
+from django.http import JsonResponse
+
+from .models import Book
+
+def list_books(request):
+    data = {
+        "books": [
+            {
+                "id": book.pk,
+                "title": book.title,
+                "author": book.author.name,
+            }
+            for book in Book.objects.all()
+        ]
+    }
+    return JsonResponse(data)</code></pre>
+
+        <p>Can you spot where the problem is? <small id="highlightcode-button"></small></p>
+
+        <script>
+          (function () {
+            const codeElement = document.getElementById("highlightcode");
+            const buttonContainer = document.getElementById("highlightcode-button");
+            const button = document.createElement("button");
+
+            button.addEventListener("click", function showSolution() {
+              codeElement.innerText = codeElement.innerText.replace("book.author.name,", "book.author.name,  #😨");
+            });
+            button.type = "button";
+            button.innerText = "highlight";
+            buttonContainer.appendChild(button);
+          })();
+        </script>
+
+        <h2>Testing with <code>assertNumQueries</code></h2>
+
+        <p>
+          When it comes to counting database queries in a test, Django helpfully ships with a custom assertion metho
+          called
+          <a
+            href="https://docs.djangoproject.com/en/stable/topics/testing/tools/#django.test.TransactionTestCase.assertNumQueries"
+            ><code>assertNumQueries</code></a
+          >
+          (which you get for free when inheriting from <code>django.test.TestCase</code>).
+        </p>
+
+        <p>
+          You use it as a
+          <a href="https://docs.python.org/3/glossary.html#term-context-manager">context manager</a> (meaning with a
+          <code>with</code> block), like so:
+        </p>
+
+        <pre><code># tests.py
+from django.test import TestCase
+
+from .models import Author, Book
+
+
+class BookListViewTestCase(TestCase):
+    def test_view_query_count(self):
+        """
+        Make sure that listing books always triggers the same number of database
+        queries no matter how many books there are.
+        """
+        Book.objects.create(
+            author=Author.objects.create(name="test"),
+            title="test",
+        )
+
+        with self.assertNumQueries(1):  # 👈🏻
+            self.client.get("/books/")</code></pre>
+
+        <p>If you try and run this test, you should see something like this:</p>
+
+        <pre><code>======================================================================
+FAIL: test_view_query_count (testapp.tests.BookListViewTestCase.test_view_query_count)
+Make sure that listing books always triggers the same number of database
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "./testapp/tests.py", line 17, in test_view_query_count
+    with self.assertNumQueries(1):
+         ^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 2 != 1 : 2 queries executed, 1 expected
+Captured queries were:
+1. SELECT "testapp_book"."id", "testapp_book"."author_id", "testapp_book"."title" FROM "testapp_book"
+2. SELECT "testapp_author"."id", "testapp_author"."name" FROM "testapp_author" WHERE "testapp_author"."id" = 1 LIMIT 21
+
+----------------------------------------------------------------------
+</code></pre>
+
+        <p>
+          The test is failing as expected, showing that two database queries were executed when we expected only one.
+          Great!
+        </p>
+
+        <p>So let's fix the view:</p>
+
+        <pre><code>def list_books(request):
+    data = {
+        "books": [
+            {
+                "id": book.pk,
+                "title": book.title,
+                "author": book.author.name,
+            }
+            for book in Book.objects.select_related("author")  # 👈🏻
+        ]
+    }
+    return JsonResponse(data)</code></pre>
+
+        <p>And now when we run the tests again, they pass! 🥳</p>
+
+        <h2>Limitations of <code>assertNumQueries</code></h2>
+
+        <p><code>assertNumQueries</code> gets you pretty far, but it can make the tests a little fragile.</p>
+
+        <p>
+          Let's say for example we wanted to restrict our view to logged-in users. It's fairly easy to do this with
+          Django's <code>@login_required</code> decorator:
+        </p>
+
+        <pre><code>from django.contrib.auth.decorators import login_required
+
+@login_required  # 👈🏻
+def list_books(request):
+    data = {
+        "books": [
+            {
+                "id": book.pk,
+                "title": book.title,
+                "author": book.author.name,
+            }
+            for book in Book.objects.select_related("author")  # 👈🏻
+        ]
+    }
+    return JsonResponse(data)</code></pre>
+
+        <p>Our test need to be updated as well to make sure we use a logged-in user:</p>
+
+        <pre><code>def test_view_query_count(self):
+        """
+        Make sure that listing books always triggers the same number of database
+        queries no matter how many books there are.
+        """
+        Book.objects.create(
+            author=Author.objects.create(name="test"),
+            title="test",
+        )
+
+        self.client.force_login(User.objects.create_user("test"))  # 👈🏻
+        with self.assertNumQueries(1):
+            self.client.get("/books/")</code></pre>
+
+        <p>Great, now let's run the tests again:</p>
+
+        <pre><code>======================================================================
+FAIL: test_view_query_count (testapp.tests.BookListViewTestCase.test_view_query_count)
+Make sure that listing books always triggers the same number of database
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "./testapp/tests.py", line 19, in test_view_query_count
+    with self.assertNumQueries(1):
+         ^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 3 != 1 : 3 queries executed, 1 expected
+Captured queries were:
+1. SELECT "django_session"."session_key", "django_session"."session_data", "django_session"."expire_date" FROM "django_session" WHERE ("django_session"."expire_date" > '2025-08-07 13:51:14.193677' AND "django_session"."session_key" = '9fb11ct45wfepk5zwvty3a5pv5pgljsr') LIMIT 21
+2. SELECT "auth_user"."id", "auth_user"."password", "auth_user"."last_login", "auth_user"."is_superuser", "auth_user"."username", "auth_user"."first_name", "auth_user"."last_name", "auth_user"."email", "auth_user"."is_staff", "auth_user"."is_active", "auth_user"."date_joined" FROM "auth_user" WHERE "auth_user"."id" = 1 LIMIT 21
+3. SELECT "testapp_book"."id", "testapp_book"."author_id", "testapp_book"."title", "testapp_author"."id", "testapp_author"."name" FROM "testapp_book" INNER JOIN "testapp_author" ON ("testapp_book"."author_id" = "testapp_author"."id")
+
+----------------------------------------------------------------------</code></pre>
+
+        <p>Oh no, it broke! I bet you didn't see that one coming. 😁</p>
+
+        <p>
+          It turns out that in order to check whether the user is logged in before accessing the view, Django will
+          execute some database queries:
+        </p>
+
+        <ol>
+          <li>Look up the session information</li>
+          <li>Look up the user information with the user id found in the session data</li>
+        </ol>
+
+        <p>
+          You might be tempted to just slap an <code>assertNumQueries(3)</code> in your test and call it a day. Sure,
+          that will work. But what happens the next time you make an unrelated change to the view? Maybe you change your
+          session backend to use cookies? Or maybe you retrieve a site-wide setting inside the view? ...
+        </p>
+
+        <p>
+          Having a brittle test like this which needs updating when changing seemingly unrelated things is a bummer, but
+          what if I told you there was a better way?
+        </p>
+
+        <h2>An idea for a more robust approach</h2>
+
+        <p>What if instead of asserting an exact number of database queries, we could do the following:</p>
+
+        <ol>
+          <li>Count how many queries are run with 1 instance in the db;</li>
+          <li>Create a lot of new instances;</li>
+          <li>Run the code again and make sure it triggers the same number of queries again.</li>
+        </ol>
+
+        <h2>Django's <code>CaptureQueriesContext</code></h2>
+
+        <p>
+          Just a heads up: I'm about to suggest using an undocumented Django API. In general it's a pretty bad habit to
+          use a framework's undocumented features, but who doesn't like living dangerously? If that's not your jam 🍯,
+          you can either reimplement the equivalent functionality yourself, or manually count queries in
+          <code>connection.queries</code>.
+        </p>
+
+        <p>
+          The delicious forbidden fruit here is Django's juicy <code>captureQueriesContext</code> (located in
+          <code>django.test.utils</code>). It's another context manager like <code>assertNumQueries</code> but it works
+          a bit differently.
+        </p>
+
+        <p>
+          As the name hints at, this context manager will capture the queries executed inside its block and store them
+          on its <code>captured_queries</code> attribute (which will be a list of queries, as strings). It can be useful
+          on its own even outside of a test:
+        </p>
+
+        <pre><code>from django.db import connection
+with captureQueriesContext(connection) as ctx:
+    list(MyModel.objects.all())
+print(*ctx.captured_queries, sep="\n")</code></pre>
+
+        <p>
+          In our case, we don't care so much about the exact queries since we just want to count how many were executed.
+          Because <code>captured_queries</code> is a list, that means all we need is <code>len(captured_queries)</code>:
+        </p>
+
+        <pre><code>from django.db import connection
+with captureQueriesContext(connection) as ctx:
+    list(MyModel.objects.all())
+query_count = len(ctx.captured_queries)</code></pre>
+
+        <p>We now have all the pieces we need to rewrite our test:</p>
+
+        <pre><code>    def test_view_query_count(self):
+        """
+        Make sure that listing books always triggers the same number of database
+        queries no matter how many books there are.
+        """
+        Book.objects.create(
+            author=Author.objects.create(name="test"),
+            title="test",
+        )
+
+        with CaptureQueriesContext(connection) as ctx:
+            self.client.get("/books/")
+
+        baseline = len(ctx.captured_queries)
+
+        for i in range(10):
+            # Here a tool like factory-boy or model-bakery would really help...
+            Book.objects.create(
+                author=Author.objects.create(name=f"test{i}"),
+                title="test{i}",
+            )
+
+        self.assertNumQueries(baseline):
+            self.client.get("/books/")</code></pre>
+
+        <p>And voilà 🎻, we now have a more robust test that won't break as often!</p>
+      </article>
+    </main>
+    <footer>
+      <p>© <strong>Baptiste Mispelon</strong> unless otherwise noted</p>
+      <p>Made with 💖 by a human, 100% slop-free guarantee</p>
+    </footer>
+  </body>
+</html>
