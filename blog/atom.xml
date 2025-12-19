@@ -1,10 +1,10 @@
-<?xml version='1.0' encoding='utf8'?>
+<?xml version='1.0' encoding='utf-8'?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>{# Blog title goes here #}</title>
   <subtitle>A blog by Baptiste Mispelon</subtitle>
   <link href="https://blog.bmispelon.rocks/atom.xml" rel="self"/>
   <link href="https://blog.bmispelon.rocks/"/>
-  <id>https://blog.bmispelon.rocks</id>
+  <id>https://blog.bmispelon.rocks/</id>
   <updated>2025-08-07T00:00:00Z</updated>
   <entry>
     <title>Django: Writing Robust Tests for N+1 Problems</title>

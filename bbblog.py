@@ -81,8 +81,8 @@ def _prettyprint_xml(tree: etree.ElementTree | etree.Element) -> str:
     return etree.tostring(
         tree,
         xml_declaration=True,
-        encoding="utf8",
-    ).decode("utf8")
+        encoding="utf-8",
+    ).decode("utf-8")
 
 
 def _mkrss(index_dir: Path, max_entries: int) -> etree.Element:
@@ -91,7 +91,7 @@ def _mkrss(index_dir: Path, max_entries: int) -> etree.Element:
     feed.append(_xml("subtitle", text="A blog by Baptiste Mispelon"))
     feed.append(_xml("link", href=f"{BLOG_ROOT_URL}/atom.xml", rel="self"))
     feed.append(_xml("link", href=f"{BLOG_ROOT_URL}/"))
-    feed.append(_xml("id", text=BLOG_ROOT_URL))
+    feed.append(_xml("id", text=f"{BLOG_ROOT_URL}/"))
 
     articles = [Article.frompath(p) for p in index_dir.glob("**/*.html")]
     articles.sort(key=attrgetter("pubdate"), reverse=True)
