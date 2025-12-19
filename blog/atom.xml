@@ -1,0 +1,2874 @@
+<?xml version='1.0' encoding='utf8'?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>{# Blog title goes here #}</title>
+  <subtitle>A blog by Baptiste Mispelon</subtitle>
+  <link href="https://blog.bmispelon.rocks/atom.xml" rel="self"/>
+  <link href="https://blog.bmispelon.rocks/"/>
+  <id>https://blog.bmispelon.rocks</id>
+  <updated>2025-08-07T00:00:00Z</updated>
+  <entry>
+    <title>Django: Writing Robust Tests for N+1 Problems</title>
+    <link href="https://blog.bmispelon.rocks/articles/2025/2025-08-07-django-writing-robust-tests-for-n+1-problems.html"/>
+    <id>https://blog.bmispelon.rocks/articles/2025/2025-08-07-django-writing-robust-tests-for-n+1-problems.html</id>
+    <published>2025-08-07T00:00:00Z</published>
+    <updated>2025-08-07T00:00:00Z</updated>
+    <content type="html">&lt;article&gt;
+  &lt;h1&gt;Django: Writing Robust Tests for N+1 Problems&lt;/h1&gt;
+  &lt;aside class="metadata"&gt;
+    &lt;p class="metadata-pubdate"&gt;
+      &lt;small&gt;Published on &lt;time datetime="2025-08-07"&gt;August 7th&lt;/time&gt;&lt;/small&gt;
+    &lt;/p&gt;
+  &lt;/aside&gt;
+  &lt;h2&gt;&lt;abbr title="Too Long, Didn't Read"&gt;TLDR;&lt;/abbr&gt;&lt;/h2&gt;
+  &lt;p&gt;
+    For those in a hurry (&lt;small&gt;or more realistically for future me who will want to find this again in 6 months&lt;/small
+    &gt;), here's the important bit:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;class BookListViewTestCase(TestCase):
+    def test_view_query_count(self):
+        """
+        Make sure that listing books always triggers the same number of database
+        queries no matter how many books there are.
+        """
+        Book.objects.create(
+            author=Author.objects.create(name="test"),
+            title="test",
+        )
+
+        with CaptureQueriesContext(connection) as ctx:
+            self.client.get("/books/")
+
+        baseline = len(ctx.captured_queries)
+
+        for i in range(10):
+            # Here a tool like factory-boy or model-bakery would really help...
+            Book.objects.create(
+                author=Author.objects.create(name=f"test{i}"),
+                title="test{i}",
+            )
+
+        self.assertNumQueries(baseline):
+            self.client.get("/books/")&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    And for anyone else, keep reading for some more in-depth explanations (and thanks for tagging along, I hope you
+    enjoy the ride 🚵🏻).
+  &lt;/p&gt;
+
+  &lt;h2&gt;What's the N+1 problem?&lt;/h2&gt;
+
+  &lt;p&gt;
+    The term "&lt;em&gt;N+1 problem&lt;/em&gt;" refers to an issue that can arise when using an ORM where you end up making more
+    database queries than you should. Typically it happens when you fetch related objects inside a loop, resulting in 1
+    query for the loop itself, then 1 query per item in the loop. If the loop has &lt;code&gt;N&lt;/code&gt; items, that means
+    &lt;code&gt;N+1&lt;/code&gt; queries in total, hence the name.
+  &lt;/p&gt;
+
+  &lt;p&gt;To show a practical example, let's say we have the following models (very imaginative, I know):&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;# models.py
+from django.db import models
+
+
+class Author(models.Model):
+    name = models.CharField()
+
+
+class Book(models.Model):
+    author = models.ForeignKey(Author)
+    title = models.CharField()&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;Let's also create a simplistic view that returns a list of all books, alongside their author's name:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code id="highlightcode"&gt;# views.py
+from django.http import JsonResponse
+
+from .models import Book
+
+def list_books(request):
+    data = {
+        "books": [
+            {
+                "id": book.pk,
+                "title": book.title,
+                "author": book.author.name,
+            }
+            for book in Book.objects.all()
+        ]
+    }
+    return JsonResponse(data)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;Can you spot where the problem is? &lt;small id="highlightcode-button"&gt;&lt;/small&gt;&lt;/p&gt;
+
+  &lt;script&gt;
+    (function () {
+      const codeElement = document.getElementById("highlightcode");
+      const buttonContainer = document.getElementById("highlightcode-button");
+      const button = document.createElement("button");
+
+      button.addEventListener("click", function showSolution() {
+        codeElement.innerText = codeElement.innerText.replace("book.author.name,", "book.author.name,  #😨");
+      });
+      button.type = "button";
+      button.innerText = "highlight";
+      buttonContainer.appendChild(button);
+    })();
+  &lt;/script&gt;
+
+  &lt;h2&gt;Testing with &lt;code&gt;assertNumQueries&lt;/code&gt;&lt;/h2&gt;
+
+  &lt;p&gt;
+    When it comes to counting database queries in a test, Django helpfully ships with a custom assertion metho called
+    &lt;a
+      href="https://docs.djangoproject.com/en/stable/topics/testing/tools/#django.test.TransactionTestCase.assertNumQueries"
+      &gt;&lt;code&gt;assertNumQueries&lt;/code&gt;&lt;/a
+    &gt;
+    (which you get for free when inheriting from &lt;code&gt;django.test.TestCase&lt;/code&gt;).
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    You use it as a
+    &lt;a href="https://docs.python.org/3/glossary.html#term-context-manager"&gt;context manager&lt;/a&gt; (meaning with a
+    &lt;code&gt;with&lt;/code&gt; block), like so:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;# tests.py
+from django.test import TestCase
+
+from .models import Author, Book
+
+
+class BookListViewTestCase(TestCase):
+    def test_view_query_count(self):
+        """
+        Make sure that listing books always triggers the same number of database
+        queries no matter how many books there are.
+        """
+        Book.objects.create(
+            author=Author.objects.create(name="test"),
+            title="test",
+        )
+
+        with self.assertNumQueries(1):  # 👈🏻
+            self.client.get("/books/")&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;If you try and run this test, you should see something like this:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;======================================================================
+FAIL: test_view_query_count (testapp.tests.BookListViewTestCase.test_view_query_count)
+Make sure that listing books always triggers the same number of database
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "./testapp/tests.py", line 17, in test_view_query_count
+    with self.assertNumQueries(1):
+         ^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 2 != 1 : 2 queries executed, 1 expected
+Captured queries were:
+1. SELECT "testapp_book"."id", "testapp_book"."author_id", "testapp_book"."title" FROM "testapp_book"
+2. SELECT "testapp_author"."id", "testapp_author"."name" FROM "testapp_author" WHERE "testapp_author"."id" = 1 LIMIT 21
+
+----------------------------------------------------------------------
+&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    The test is failing as expected, showing that two database queries were executed when we expected only one. Great!
+  &lt;/p&gt;
+
+  &lt;p&gt;So let's fix the view:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;def list_books(request):
+    data = {
+        "books": [
+            {
+                "id": book.pk,
+                "title": book.title,
+                "author": book.author.name,
+            }
+            for book in Book.objects.select_related("author")  # 👈🏻
+        ]
+    }
+    return JsonResponse(data)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;And now when we run the tests again, they pass! 🥳&lt;/p&gt;
+
+  &lt;h2&gt;Limitations of &lt;code&gt;assertNumQueries&lt;/code&gt;&lt;/h2&gt;
+
+  &lt;p&gt;&lt;code&gt;assertNumQueries&lt;/code&gt; gets you pretty far, but it can make the tests a little fragile.&lt;/p&gt;
+
+  &lt;p&gt;
+    Let's say for example we wanted to restrict our view to logged-in users. It's fairly easy to do this with Django's
+    &lt;code&gt;@login_required&lt;/code&gt; decorator:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;from django.contrib.auth.decorators import login_required
+
+@login_required  # 👈🏻
+def list_books(request):
+    data = {
+        "books": [
+            {
+                "id": book.pk,
+                "title": book.title,
+                "author": book.author.name,
+            }
+            for book in Book.objects.select_related("author")  # 👈🏻
+        ]
+    }
+    return JsonResponse(data)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;Our test need to be updated as well to make sure we use a logged-in user:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;def test_view_query_count(self):
+        """
+        Make sure that listing books always triggers the same number of database
+        queries no matter how many books there are.
+        """
+        Book.objects.create(
+            author=Author.objects.create(name="test"),
+            title="test",
+        )
+
+        self.client.force_login(User.objects.create_user("test"))  # 👈🏻
+        with self.assertNumQueries(1):
+            self.client.get("/books/")&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;Great, now let's run the tests again:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;======================================================================
+FAIL: test_view_query_count (testapp.tests.BookListViewTestCase.test_view_query_count)
+Make sure that listing books always triggers the same number of database
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "./testapp/tests.py", line 19, in test_view_query_count
+    with self.assertNumQueries(1):
+         ^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 3 != 1 : 3 queries executed, 1 expected
+Captured queries were:
+1. SELECT "django_session"."session_key", "django_session"."session_data", "django_session"."expire_date" FROM "django_session" WHERE ("django_session"."expire_date" &amp;gt; '2025-08-07 13:51:14.193677' AND "django_session"."session_key" = '9fb11ct45wfepk5zwvty3a5pv5pgljsr') LIMIT 21
+2. SELECT "auth_user"."id", "auth_user"."password", "auth_user"."last_login", "auth_user"."is_superuser", "auth_user"."username", "auth_user"."first_name", "auth_user"."last_name", "auth_user"."email", "auth_user"."is_staff", "auth_user"."is_active", "auth_user"."date_joined" FROM "auth_user" WHERE "auth_user"."id" = 1 LIMIT 21
+3. SELECT "testapp_book"."id", "testapp_book"."author_id", "testapp_book"."title", "testapp_author"."id", "testapp_author"."name" FROM "testapp_book" INNER JOIN "testapp_author" ON ("testapp_book"."author_id" = "testapp_author"."id")
+
+----------------------------------------------------------------------&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;Oh no, it broke! I bet you didn't see that one coming. 😁&lt;/p&gt;
+
+  &lt;p&gt;
+    It turns out that in order to check whether the user is logged in before accessing the view, Django will execute
+    some database queries:
+  &lt;/p&gt;
+
+  &lt;ol&gt;
+    &lt;li&gt;Look up the session information&lt;/li&gt;
+    &lt;li&gt;Look up the user information with the user id found in the session data&lt;/li&gt;
+  &lt;/ol&gt;
+
+  &lt;p&gt;
+    You might be tempted to just slap an &lt;code&gt;assertNumQueries(3)&lt;/code&gt; in your test and call it a day. Sure, that
+    will work. But what happens the next time you make an unrelated change to the view? Maybe you change your session
+    backend to use cookies? Or maybe you retrieve a site-wide setting inside the view? ...
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    Having a brittle test like this which needs updating when changing seemingly unrelated things is a bummer, but what
+    if I told you there was a better way?
+  &lt;/p&gt;
+
+  &lt;h2&gt;An idea for a more robust approach&lt;/h2&gt;
+
+  &lt;p&gt;What if instead of asserting an exact number of database queries, we could do the following:&lt;/p&gt;
+
+  &lt;ol&gt;
+    &lt;li&gt;Count how many queries are run with 1 instance in the db;&lt;/li&gt;
+    &lt;li&gt;Create a lot of new instances;&lt;/li&gt;
+    &lt;li&gt;Run the code again and make sure it triggers the same number of queries again.&lt;/li&gt;
+  &lt;/ol&gt;
+
+  &lt;h2&gt;Django's &lt;code&gt;CaptureQueriesContext&lt;/code&gt;&lt;/h2&gt;
+
+  &lt;p&gt;
+    Just a heads up: I'm about to suggest using an undocumented Django API. In general it's a pretty bad habit to use a
+    framework's undocumented features, but who doesn't like living dangerously? If that's not your jam 🍯, you can
+    either reimplement the equivalent functionality yourself, or manually count queries in
+    &lt;code&gt;connection.queries&lt;/code&gt;.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    The delicious forbidden fruit here is Django's juicy &lt;code&gt;captureQueriesContext&lt;/code&gt; (located in
+    &lt;code&gt;django.test.utils&lt;/code&gt;). It's another context manager like &lt;code&gt;assertNumQueries&lt;/code&gt; but it works a bit
+    differently.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    As the name hints at, this context manager will capture the queries executed inside its block and store them on its
+    &lt;code&gt;captured_queries&lt;/code&gt; attribute (which will be a list of queries, as strings). It can be useful on its own
+    even outside of a test:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;from django.db import connection
+with captureQueriesContext(connection) as ctx:
+    list(MyModel.objects.all())
+print(*ctx.captured_queries, sep="\n")&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    In our case, we don't care so much about the exact queries since we just want to count how many were executed.
+    Because &lt;code&gt;captured_queries&lt;/code&gt; is a list, that means all we need is &lt;code&gt;len(captured_queries)&lt;/code&gt;:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;from django.db import connection
+with captureQueriesContext(connection) as ctx:
+    list(MyModel.objects.all())
+query_count = len(ctx.captured_queries)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;We now have all the pieces we need to rewrite our test:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;    def test_view_query_count(self):
+        """
+        Make sure that listing books always triggers the same number of database
+        queries no matter how many books there are.
+        """
+        Book.objects.create(
+            author=Author.objects.create(name="test"),
+            title="test",
+        )
+
+        with CaptureQueriesContext(connection) as ctx:
+            self.client.get("/books/")
+
+        baseline = len(ctx.captured_queries)
+
+        for i in range(10):
+            # Here a tool like factory-boy or model-bakery would really help...
+            Book.objects.create(
+                author=Author.objects.create(name=f"test{i}"),
+                title="test{i}",
+            )
+
+        self.assertNumQueries(baseline):
+            self.client.get("/books/")&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;And voilà 🎻, we now have a more robust test that won't break as often!&lt;/p&gt;
+&lt;/article&gt;
+</content>
+    <author>
+      <name>Baptiste Mispelon</name>
+    </author>
+  </entry>
+  <entry>
+    <title>Wagtail: Annotating a Parent Attribute on a Page QuerySet</title>
+    <link href="https://blog.bmispelon.rocks/articles/2025/2025-08-01-wagtail-annotating-the-parent-on-a-page-queryset.html"/>
+    <id>https://blog.bmispelon.rocks/articles/2025/2025-08-01-wagtail-annotating-the-parent-on-a-page-queryset.html</id>
+    <published>2025-08-01T00:00:00Z</published>
+    <updated>2025-08-01T00:00:00Z</updated>
+    <content type="html">&lt;article&gt;
+  &lt;h1&gt;Wagtail: Annotating a Parent Attribute on a Page QuerySet&lt;/h1&gt;
+  &lt;aside class="metadata"&gt;
+    &lt;p class="metadata-pubdate"&gt;
+      &lt;small&gt;Published on &lt;time datetime="2025-08-01"&gt;August 1st&lt;/time&gt;&lt;/small&gt;
+    &lt;/p&gt;
+  &lt;/aside&gt;
+
+  &lt;p&gt;
+    I've been working on a &lt;a href="https://wagtail.org/"&gt;Wagtail&lt;/a&gt; project recently where I found myself wanting to
+    filter a queryset of pages based on the property of each row's parent. I found a solution using annotations and
+    Django's database functions which I thought was neat.
+  &lt;/p&gt;
+
+  &lt;h2&gt;&lt;abbr title="Too Long, Didn't Read"&gt;TLDR;&lt;/abbr&gt;&lt;/h2&gt;
+  &lt;pre&gt;&lt;code&gt;from django.db.models import OuterRef, Subquery
+from django.db.models.functions import Reverse, Substr
+from wagtail.models import Page
+
+def parent_path(path):
+    """
+    Return a database expression that evaluates to the parent path of the given path.
+    """
+    # Unfortunately Substr doesn't support negative indices which would be ideal
+    # here since the parent path is the child's path minus the last N characters (
+    # where N is the `steplen` which defaults to 4).
+    # So instead we do a reverse-substr-reverse which achieves the same thing.
+    return Reverse(
+        Substr(Reverse(path), 1 + Page.steplen),  # Substr uses 1-index
+    )
+
+
+def parent_field(field_name, queryset=None):
+    """
+    Return a database expression that evaluates to value of the row's parent's given field.
+    """
+    if queryset is None:
+        queryset = Page.objects.all()
+    queryset = queryset.filter(path=parent_path(OuterRef("path")))
+    return Subquery(queryset.values(field_name))&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;If that didn't quite make sense, here's some context and some more explanations:&lt;/p&gt;
+
+  &lt;h2&gt;Wagtail's Page tree 🌳&lt;/h2&gt;
+  &lt;p&gt;
+    One of Wagtail's key piece of code is the &lt;code&gt;Page&lt;/code&gt; class. It's a normal Django model with fields like
+    "title" or "publication date", but pages can also be nested under one another.
+  &lt;/p&gt;
+  &lt;p&gt;
+    Each page has single parent (except for a special page called a "root page" which has no parent), which creates a
+    tree structure where pages can be nested as deep as you'd like (well, up to a limit but you're unlikely to hit
+    that).
+  &lt;/p&gt;
+
+  &lt;h2&gt;MP trees&lt;/h2&gt;
+  &lt;p&gt;
+    Wagtail uses django-treebeard's "&lt;a href="https://django-treebeard.readthedocs.io/en/latest/mp_tree.html"
+      &gt;Materialized Path Trees&lt;/a
+    &gt;" to make querying the page tree as efficient as possible. It's a fairly complex library, but the key idea is that
+    each &lt;code&gt;Page&lt;/code&gt; is given a unique &lt;code&gt;path&lt;/code&gt; attribute which is constructed in a clever way that makes
+    navigating the tree easy.
+  &lt;/p&gt;
+  &lt;p&gt;
+    A path is a string made of of segments of fixed size (4 characters by default). For example if a path was
+    &lt;code&gt;0001000200030001&lt;/code&gt; then its 4 segments would be &lt;code&gt;0001&lt;/code&gt;, &lt;code&gt;0002&lt;/code&gt;, &lt;code&gt;0003&lt;/code&gt;,
+    and &lt;code&gt;0001&lt;/code&gt;. When creating a new page, its path is built by taking the parent's path and adding a new
+    segment at the end. So in our example, if we were adding a new page to our &lt;code&gt;0001000200030001&lt;/code&gt;, then its
+    path could look something like &lt;code&gt;0001000200030001 0007&lt;/code&gt; (I added a space to make it clearer, in practice
+    the segments are all stuck together).
+  &lt;/p&gt;
+  &lt;h2&gt;Knowing your parent 🧓🏻&lt;/h2&gt;
+  &lt;p&gt;
+    With this system, it becomes very easy to compute the path of a page's parent: all you have to do is remove the last
+    segment from the page's path. In Python it would look like this:
+  &lt;/p&gt;
+  &lt;pre&gt;&lt;code&gt;parent_path = page.path[:-4]&lt;/code&gt;&lt;/pre&gt;
+  &lt;p&gt;
+    (In practice it's a bit more complicated because the segment length is configurable, but the
+    &lt;a
+      ref="https://github.com/django-treebeard/django-treebeard/blob/777f5082fdb01ddfe1c67a8a80a2ebf2a0fb0055/treebeard/mp_tree.py#L1165-L1170"
+      &gt;real code&lt;/a
+    &gt;
+    is not that much more complicated than that really.)
+  &lt;/p&gt;
+
+  &lt;h2&gt;Back to the initial problem&lt;/h2&gt;
+  &lt;p&gt;
+    If you remember, the issue I was originally trying to solve was to filter a queryset of pages based on the value of
+    the parent's specific field. So I needed a way to somehow join a page to its parent directly in the database.
+  &lt;/p&gt;
+  &lt;p&gt;
+    There's many different ways to achieve this, but one way that works well (especially with the Django ORM) is to use
+    a subquery. The plan of attack then becomes:
+  &lt;/p&gt;
+  &lt;ol&gt;
+    &lt;li&gt;For each page in the queryset, calculate the parent path using the formula from above;&lt;/li&gt;
+    &lt;li&gt;Using a subquery, fetch the parent of each row using the computed path;&lt;/li&gt;
+    &lt;li&gt;Once we have the parent, select the field/column we care about;&lt;/li&gt;
+    &lt;li&gt;Annotate this new value to the queryset.&lt;/li&gt;
+  &lt;/ol&gt;
+
+  &lt;h2&gt;Computing the parent path using database functions&lt;/h2&gt;
+  &lt;p&gt;
+    Django ships with a very useful collection of
+    &lt;a href="https://docs.djangoproject.com/en/stable/ref/models/database-functions/"&gt;database functions&lt;/a&gt;. Of
+    particular interest to us on this problem is &lt;code&gt;Substr&lt;/code&gt; (short for substring, I'm sure that was worth
+    saving those 3 characters). Using our previous formula, it should be possible to compute a page's parent path using
+    something like &lt;code&gt;Substr("path", -4)&lt;/code&gt; but unfortunately that doesn't work for two reasons:
+  &lt;/p&gt;
+  &lt;p&gt;&lt;/p&gt;
+  &lt;ol&gt;
+    &lt;li&gt;&lt;code&gt;Substr&lt;/code&gt; does not support negative indices 🥹&lt;/li&gt;
+    &lt;li&gt;&lt;code&gt;Substr&lt;/code&gt; indices start at 1, not 0 😭&lt;/li&gt;
+  &lt;/ol&gt;
+  &lt;p&gt;But that's not going to stop me, and with a bit of faffing about I was able to come up with this function:&lt;/p&gt;
+  &lt;pre&gt;&lt;code&gt;from django.db.models.functions import Reverse, Substr
+from wagtail.models import Page
+
+def parent_path(path):
+    """
+    Return a database expression that evaluates to the parent path of the given path.
+    """
+    # Unfortunately Substr doesn't support negative indices which would be ideal
+    # here since the parent path is the child's path minus the last N characters (
+    # where N is the `steplen` which defaults to 4).
+    # So instead we do a reverse-substr-reverse which achieves the same thing.
+    return Reverse(
+        Substr(Reverse(path), 1 + Page.steplen),  # Substr uses 1-index
+    )&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    Once we have that we're almost there, all that's left is to remember how to use Django's
+    &lt;code&gt;Subquery&lt;/code&gt; which I always have to look up somehow:
+  &lt;/p&gt;
+  &lt;pre&gt;&lt;code&gt;# OuterRef essentially means "the field with that name on the outer queryset":
+parent_page = Page.objects.filter(path=parent_path(OuterRef("path")))
+# Let's use title here, but it could be anything:
+parent_title = Subquery(parent_page.values("title"))
+# Now we can annotate and filter:
+original_queryset.annotate(parent_title=parent_title).filter(parent_title=...)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;And voilà, we now have a parent field annotate on our queryset!&lt;/p&gt;
+
+  &lt;h2&gt;Conclusion&lt;/h2&gt;
+
+  &lt;p&gt;
+    The Django ORM is very powerful, and the database functions it ships really lets you build interesting things.
+    &lt;code&gt;Subquery&lt;/code&gt; is also very neat (remember when I used it last year to
+    &lt;a href="/articles/2024/2024-05-09-django-getting-a-full-model-instance-from-a-subquery.html"
+      &gt;build full instances from a subquery&lt;/a
+    &gt;, bypassing the 1-column limit?).
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    But since you've read all the way to the end, I'll share a little secret with you. On that work project I mentionned
+    where I wrote this code, I ended up scrapping the whole thing after my colleague pointed out during code review that
+    Wagtail already kind of did what I wanted with
+    &lt;a
+      href="https://docs.wagtail.org/en/stable/reference/pages/queryset_reference.html#wagtail.query.PageQuerySet.child_of"
+      &gt;&lt;code&gt;PageQuerySet.child_of()&lt;/code&gt;&lt;/a
+    &gt;, so the real lesson is know your tools, and know when to get rid of your clever code when standard solutions
+    already exist. Oh, and that code reviews are awesome!
+  &lt;/p&gt;
+&lt;/article&gt;
+</content>
+    <author>
+      <name>Baptiste Mispelon</name>
+    </author>
+  </entry>
+  <entry>
+    <title>Using a temporary storage backend inside a Django test</title>
+    <link href="https://blog.bmispelon.rocks/articles/2024/2024-12-09-using-a-temporary-storage-backend-inside-a-django-test.html"/>
+    <id>https://blog.bmispelon.rocks/articles/2024/2024-12-09-using-a-temporary-storage-backend-inside-a-django-test.html</id>
+    <published>2024-12-09T00:00:00Z</published>
+    <updated>2024-12-09T00:00:00Z</updated>
+    <content type="html">&lt;article&gt;
+  &lt;h1&gt;Using a temporary storage backend inside a Django test&lt;/h1&gt;
+  &lt;aside class="metadata"&gt;
+    &lt;p class="metadata-pubdate"&gt;
+      &lt;small&gt;Published on &lt;time datetime="2024-12-09"&gt;December 9th&lt;/time&gt;&lt;/small&gt;
+    &lt;/p&gt;
+  &lt;/aside&gt;
+  &lt;p&gt;
+    Today I ran across an issue involving storages and staticfiles during tests. I was surprised not to find any quick
+    solution online so here's my quick attempt at a solution. First the code, then some explanations:
+  &lt;/p&gt;
+  &lt;pre&gt;&lt;code&gt;import shutil
+import tempfile
+
+
+class TempDirMediaRootMixin:
+    @classmethod
+    def setUpClass(cls):
+        cls.tmpdir = tempfile.mkdtemp()
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(cls.tmpdir, ignore_errors=True)
+
+    def run(self, result=None):
+        with self.settings(MEDIA_ROOT=self.tmpdir):
+            return super().run(result)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;h2&gt;The problem&lt;/h2&gt;
+  &lt;p&gt;
+    If you've ever worked with files in Django you're probably familiar with
+    &lt;code&gt;settings.MEDIA_ROOT&lt;/code&gt; which is the directory on your filesystem where Django will store uploaded files
+    (assuming you're using the default &lt;code&gt;settings.STORAGES&lt;/code&gt; and its &lt;code&gt;FileSystemStorage&lt;/code&gt; backend).
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    However, unlike other settings like &lt;code&gt;settings.DATABASES&lt;/code&gt; or &lt;code&gt;settings.EMAIL_*&lt;/code&gt; which are
+    treated specially during tests (Django will run tests in a special test database, and will also send emails to a
+    special in-memory email backend during tests), Django will happily reuse your &lt;code&gt;settings.MEDIA_ROOT&lt;/code&gt; when
+    running your tests.
+  &lt;/p&gt;
+
+  &lt;p&gt;This created two problems for me:&lt;/p&gt;
+  &lt;ol&gt;
+    &lt;li&gt;Existing files in &lt;code&gt;MEDIA_ROOT&lt;/code&gt; could interfere with the tests;&lt;/li&gt;
+    &lt;li&gt;
+      Saving files during tests would clutter the &lt;code&gt;MEDIA_ROOT&lt;/code&gt; directory and were not cleaned up after the
+      tests were finished.
+    &lt;/li&gt;
+  &lt;/ol&gt;
+
+  &lt;h2&gt;My solution&lt;/h2&gt;
+  &lt;p&gt;
+    Problem #1 can be solved by using a different &lt;code&gt;MEDIA_ROOT&lt;/code&gt; when running tests. Maybe by using a value
+    derived from an environment variable inside the settings file, or by using a different settings module for the
+    tests. Either way, it's a bit annoying and requires modifications to the project's settings file, and maybe a bit of
+    rearchitecturing of the infrastructure (like switching to multiple settings files).
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    Problem #2 can be solved by manually deleting our test &lt;code&gt;MEDIA_ROOT&lt;/code&gt; directory, but that can get annoying
+    fast (and it's easy to forget).
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    What if we could use a temporary directory for our tests, and have it be automatically cleaned once the test is
+    over? Luckily Python has a nice builtin library for that:
+    &lt;a href="https://docs.python.org/3/library/tempfile.html"&gt;tempfile&lt;/a&gt;!
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    Calling &lt;code&gt;tempfile.mkdtemp()&lt;/code&gt; returns the name of a directory on the filesystem with a random name (you
+    can use the &lt;code&gt;prefix&lt;/code&gt; and &lt;code&gt;suffix&lt;/code&gt; arguments to customize the naming of the directory which can
+    be useful when debugging). Once we have a name, all that's left is to tell Django to use that for
+    &lt;code&gt;settings.MEDIA_ROOT&lt;/code&gt;.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    This is where
+    &lt;a href="https://docs.python.org/3/library/unittest.html#unittest.TestCase"&gt;unittest.TestCase&lt;/a&gt;'s extension points
+    come in handy. First, there's &lt;code&gt;setUpClass()&lt;/code&gt;: this method will be called once per
+    &lt;code&gt;TestCase&lt;/code&gt; (sub)class at the beginning and so is the perfect place to initialize our temporary directory
+    with &lt;code&gt;mkdtemp()&lt;/code&gt;.
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;class TempDirMediaRootMixin:
+    @classmethod
+    def setUpClass(cls):
+        cls.tmpdir = tempfile.mkdtemp()
+        super().setUpClass()
+
+    ...&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    Then there's the corresponding &lt;code&gt;tearDownClass()&lt;/code&gt;: this method is also called once per (sub)class but this
+    time at the end and so is the perfect place to have cleanup logic, in this case using
+    &lt;code&gt;shutil.rmtree()&lt;/code&gt; to delete our temporary directory.
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;class TempDirMediaRootMixin:
+    ...
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(cls.tmpdir, ignore_errors=True)
+
+    ...&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    Finally I needed a way to tell Django to use my temporary directory as a value for
+    &lt;code&gt;settings.MEDIA_ROOT&lt;/code&gt;. Normally you could decorate either a whole &lt;code&gt;TestCase&lt;/code&gt; class or one of
+    its methods with Django's
+    &lt;a href="https://docs.djangoproject.com/en/5.1/topics/testing/tools/#django.test.override_settings"
+      &gt;&lt;code&gt;override_settings(MEDIA_ROOT=...)&lt;/code&gt;&lt;/a
+    &gt;
+    but here we can't do that because the new value of &lt;code&gt;MEDIA_ROOT&lt;/code&gt; is dynamic. That's why I opted to use the
+    &lt;code&gt;run()&lt;/code&gt; extension point since it allows me to wrap the execution of all the test methods of the class
+    inside a context manager, conveniently using Django's
+    &lt;a href="https://docs.djangoproject.com/en/5.1/topics/testing/tools/#django.test.SimpleTestCase.settings"
+      &gt;&lt;code&gt;self.settings()&lt;/code&gt;&lt;/a
+    &gt;.
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;class TempDirMediaRootMixin:
+    ...
+
+    def run(self, result=None):
+        with self.settings(MEDIA_ROOT=self.tmpdir):
+            return super().run(result)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;h2&gt;Final thoughts&lt;/h2&gt;
+
+  &lt;p&gt;
+    One thing I don't like so much with this approach is that there's still some state shared between individual tests
+    on the same test class. That could be fixed by clearing the temporary directory either before every test is run
+    (&lt;code&gt;setUp()&lt;/code&gt;) or after (&lt;code&gt;tearDown()&lt;/code&gt;), but I would worry about performance (I haven't done any
+    benchmarks though, so maybe that's not actually an issue 🤷🏻).
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    I also wonder if this is something that could/should be fixed in Django itself. I found it surprising that Django
+    reused the project's &lt;code&gt;settings.STORAGES&lt;/code&gt; during the tests. This is different from what happens with
+    &lt;code&gt;settings.DATABASES&lt;/code&gt; or &lt;code&gt;settings.EMAIL_BACKEND&lt;/code&gt; where Django swaps the real backends with a
+    different one when running tests. Not sure if there's already a ticket for that. If I ever run out of things to do
+    on my open-source TODO list maybe I'll tackle that one 😆.
+  &lt;/p&gt;
+&lt;/article&gt;
+</content>
+    <author>
+      <name>Baptiste Mispelon</name>
+    </author>
+  </entry>
+  <entry>
+    <title>GenericForeignKey Deep Filtering</title>
+    <link href="https://blog.bmispelon.rocks/articles/2024/2024-11-25-genericforeignkey-deep-filtering.html"/>
+    <id>https://blog.bmispelon.rocks/articles/2024/2024-11-25-genericforeignkey-deep-filtering.html</id>
+    <published>2024-11-25T00:00:00Z</published>
+    <updated>2024-11-25T00:00:00Z</updated>
+    <content type="html">&lt;article&gt;
+  &lt;h1&gt;GenericForeignKey Deep Filtering&lt;/h1&gt;
+  &lt;aside class="metadata"&gt;
+    &lt;p class="metadata-pubdate"&gt;
+      &lt;small&gt;Published on &lt;time datetime="2024-11-25"&gt;November 25th&lt;/time&gt;&lt;/small&gt;
+    &lt;/p&gt;
+  &lt;/aside&gt;
+
+  &lt;p&gt;
+    One of the many "batteries" Django comes with is
+    &lt;a
+      href="https://docs.djangoproject.com/en/5.1/ref/contrib/contenttypes/#django.contrib.contenttypes.fields.GenericForeignKey"
+      &gt;&lt;code&gt;GenericForeignKey&lt;/code&gt;&lt;/a
+    &gt;
+    (often shortened to &lt;abbr title="Generic Foreign Key"&gt;GFK&lt;/abbr&gt;). I'm not necessarily the biggest fan of that
+    particular battery (&lt;small&gt;that might be a topic for another post?&lt;/small&gt;), but it's hard to deny that GFKs can
+    enable some pretty nifty use-cases. Recently at work I was tasked with implementing a kind of deep filtering of a
+    model that used a GFK, and came up with a technique that seems generic (&lt;small&gt;hehe&lt;/small&gt;) enough to be worth
+    sharing.
+  &lt;/p&gt;
+
+  &lt;h2&gt;Quick refresher: regular foreign keys&lt;/h2&gt;
+
+  &lt;p&gt;
+    In order to show the limitations of GFKs that led me to create my "deep filtering" technique, let's first start with
+    a quick example involving a regular &lt;code&gt;ForeignKey&lt;/code&gt;. I'll go for the classic &lt;code&gt;Book&lt;/code&gt; model, this
+    time with a related &lt;code&gt;Review&lt;/code&gt; model that will come in handy later.
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;from django.db import models
+
+class Book(models.Model):
+    author = models.ForeignKey("auth.User", on_delete=models.CASCADE)
+    title = models.CharField(max_length=200)
+
+
+class Review(models.Model):
+    book = models.ForeignKey(Book, on_delete=models.CASCADE)
+    reviewer = models.ForeignKey("auth.User", on_delete=models.CASCADE)
+    score = models.PositiveIntegerField()&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    Now if you want to list all reviews attached to a book whose title contains the word "Django", you can do
+    &lt;code&gt;Review.objects.filter(book__title__icontains="django")&lt;/code&gt;. The nifty &lt;code&gt;__&lt;/code&gt; double-underscore
+    syntax of Django's ORM enables "jumping" over any foreign key. You can even do it multiple times.
+    &lt;code&gt;Review.objects.filter(book__author__username="baptiste")&lt;/code&gt; will list all reviews attached to a book
+    authored by the user &lt;code&gt;bmispelon&lt;/code&gt;. Neat!
+  &lt;/p&gt;
+
+  &lt;h2&gt;Generic Foreign Keys&lt;/h2&gt;
+
+  &lt;p&gt;
+    Whereas a regular foreign key points to a single model class (&lt;small&gt;boring!&lt;/small&gt;), a
+    &lt;strong&gt;generic&lt;/strong&gt; foreign key can point to &lt;strong&gt;any&lt;/strong&gt; model you wish (&lt;small&gt;exciting!&lt;/small&gt;).
+    Let's try an example, inspired by the real-life
+    &lt;a href="https://docs.djangoproject.com/en/5.1/ref/contrib/admin/#logentry-objects"&gt;&lt;code&gt;LogEntry&lt;/code&gt;&lt;/a&gt;
+    model from Django's admin:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
+from django.db import models
+
+
+class LogEntry(models.Model):
+    timestamp = models.DateTimeField(auto_now_add=True)
+    user = models.ForeignKey("auth.User", on_delete=models.CASCADE)
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.PositiveIntegerField()
+    affected = GenericForeignKey("content_type", "object_id")
+    message = models.TextField()&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    The &lt;code&gt;LogEntry&lt;/code&gt; model is meant to track events on different objects within our codebase. It has a
+    &lt;code&gt;timestamp&lt;/code&gt; to store when the even happened, a &lt;code&gt;user&lt;/code&gt; to know who triggered the event, a
+    &lt;code&gt;message&lt;/code&gt; where we can store a description of the event, and finally an &lt;code&gt;affected&lt;/code&gt; generic
+    foreign key that lets us attach the log entry to any model.
+  &lt;/p&gt;
+
+  &lt;h2&gt;"Deep filtering"&lt;/h2&gt;
+
+  &lt;p&gt;
+    The problem I was trying to solve was that I wanted to get a list of all log entries that "affected" a given user.
+    This could be because the entry was attached directly to the user instance, but it could also be because it was
+    attached to a book whose author was the user, or a review from the given user, ...
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    With a regular foreign key, we could have used &lt;code&gt;__&lt;/code&gt; filtering like we showed in the previous section, but
+    that's not possible anymore with a generic foreign key.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    If we restrict the problem to a single model, it becomes easier to solve. Say for example that we want to get all
+    log entries that are attached directly to a given user &lt;code&gt;USER&lt;/code&gt; (an instance of the
+    &lt;code&gt;django.contrib.auth.models.User&lt;/code&gt; model), we can do:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;LogEntry.objects.filter(affected=USER)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    Though it's a bit more complicated, it's also possible to get all entries that are attached to a book where
+    &lt;code&gt;USER&lt;/code&gt; is the author:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;LogEntry.objects.filter(
+    content_type=ContentType.objects.get_for_model(Book),
+    object_id__in=Book.objects.filter(author=USER)
+)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;This approach works also for reviews by &lt;code&gt;USER&lt;/code&gt;:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;LogEntry.objects.filter(
+    content_type=ContentType.objects.get_for_model(Review),
+    object_id__in=Review.objects.filter(reviewer=USER)
+)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;Or even getting entries attached to a review for one of &lt;code&gt;USER&lt;/code&gt;'s books:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;LogEntry.objects.filter(
+    content_type=ContentType.objects.get_for_model(Review),
+    object_id__in=Review.objects.filter(book__author=USER)
+)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;h2&gt;&lt;code&gt;CASE WHEN&lt;/code&gt; to the rescue&lt;/h2&gt;
+
+  &lt;p&gt;
+    The idea is to generalize the approach of the last three examples by creating a mapping of model -&amp;gt; Q object,
+    where the Q object is used to filter down the model queryset:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;from django.contrib.auth.models import User
+from django.contrib.contenttypes.models import ContentType
+from django.db.models import BooleanField, Q, Value
+from django.db.models.expressions import Case, When
+
+
+def is_affected(user):
+    Q_OBJS = {
+        Book: Q(author=user),
+        Review: Q(book__author=user) | Q(reviewer=user),
+    }
+
+    whens = [
+        # The entry is directly attached to the user
+        When(content_type=ContentType.objects.get_for_model(User), then=Q(object_id=user.pk))
+    ]
+
+    for model_class, qobj in Q_OBJS.items():
+        content_type = ContentType.objects.get_for_model(model_class)
+        object_ids = model_class.objects.filter(qobj)
+        whens.append(When(content_type=content_type, then=object_id__in=object_ids))
+
+    return Case(*whens, default=Value(False), output_field=BooleanField())&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    Now that we have this function, getting a list of log entries that affect &lt;code&gt;USER&lt;/code&gt; becomes as simple as:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;LogEntry.objects.filter(is_affected(USER))&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;&lt;strong&gt;Voilà!&lt;/strong&gt;&lt;/p&gt;
+&lt;/article&gt;
+</content>
+    <author>
+      <name>Baptiste Mispelon</name>
+    </author>
+  </entry>
+  <entry>
+    <title>Find git commits that delete files</title>
+    <link href="https://blog.bmispelon.rocks/articles/2024/2024-11-07-find-git-commits-that-delete-files.html"/>
+    <id>https://blog.bmispelon.rocks/articles/2024/2024-11-07-find-git-commits-that-delete-files.html</id>
+    <published>2024-11-07T00:00:00Z</published>
+    <updated>2024-11-07T00:00:00Z</updated>
+    <content type="html">&lt;article&gt;
+  &lt;h1&gt;Find git commits that delete files&lt;/h1&gt;
+  &lt;aside class="metadata"&gt;
+    &lt;p class="metadata-pubdate"&gt;
+      &lt;small&gt;Published on &lt;time datetime="2024-11-07"&gt;November 7th&lt;/time&gt;&lt;/small&gt;
+    &lt;/p&gt;
+  &lt;/aside&gt;
+  &lt;p&gt;
+    While working on a &lt;a href="https://code.djangoproject.com/ticket/35894"&gt;Django ticket&lt;/a&gt;, I found myself doing
+    some git archeology and learned a new (to) me flag for &lt;code&gt;git log&lt;/code&gt; which I thought I'd share.
+  &lt;/p&gt;
+  &lt;h2&gt;The problem statement&lt;/h2&gt;
+  &lt;p&gt;
+    I wanted to find commits that had removed or renamed a file inside a specific directory (&lt;code&gt;docs/&lt;/code&gt; in this
+    case).
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    I've been doing git archeology for long enough that I know that when the problem statement starts with "I want to
+    find a commit that ..." then the solution probably involves &lt;code&gt;git log&lt;/code&gt; and this time was no different.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    None of my searches were turning up anything interesting, only solutions for "how to find the commit where file X
+    was deleted", so I decided to read through the manual for &lt;code&gt;git log&lt;/code&gt;.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    After some trial and error involving &lt;code&gt;--stat&lt;/code&gt; and &lt;code&gt;--dirstat&lt;/code&gt;, I finally found what I wanted
+    by looking for the word "deleted" inside the man page.
+  &lt;/p&gt;
+
+  &lt;h2&gt;The solution: &lt;code&gt;--diff-filter&lt;/code&gt;&lt;/h2&gt;
+
+  &lt;p&gt;Here's the command I ended up with:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;git log --diff-filter=RD --stat -- docs/&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;Some explanations:&lt;/p&gt;
+  &lt;ul&gt;
+    &lt;li&gt;&lt;code&gt;git log&lt;/code&gt; will list commits (all of them by default, in reverse order from newest to oldest);&lt;/li&gt;
+    &lt;li&gt;
+      &lt;code&gt;--diff-filter=RD&lt;/code&gt; will only list commits that either deleted (&lt;code&gt;D&lt;/code&gt;) or renamed
+      (&lt;code&gt;R&lt;/code&gt;) a file;
+    &lt;/li&gt;
+    &lt;li&gt;
+      &lt;code&gt;--stat&lt;/code&gt; will show some statistics on the commit, in that case showing which was was deleted/renamed;
+    &lt;/li&gt;
+    &lt;li&gt;
+      finally, &lt;code&gt;-- docs/&lt;/code&gt; restricts the commits to those involving files inside the
+      &lt;code&gt;docs/&lt;/code&gt; directory.
+    &lt;/li&gt;
+  &lt;/ul&gt;
+
+  &lt;p&gt;Have fun exploring your git repositories! ⛏️&lt;/p&gt;
+&lt;/article&gt;
+</content>
+    <author>
+      <name>Baptiste Mispelon</name>
+    </author>
+  </entry>
+  <entry>
+    <title>Manually setting a field when saving a ModelForm</title>
+    <link href="https://blog.bmispelon.rocks/articles/2024/2024-11-04-modelform-save-related-objects.html"/>
+    <id>https://blog.bmispelon.rocks/articles/2024/2024-11-04-modelform-save-related-objects.html</id>
+    <published>2024-11-04T00:00:00Z</published>
+    <updated>2024-11-04T00:00:00Z</updated>
+    <content type="html">&lt;article&gt;
+  &lt;h1&gt;Manually setting a field when saving a ModelForm&lt;/h1&gt;
+  &lt;aside class="metadata"&gt;
+    &lt;p class="metadata-pubdate"&gt;
+      &lt;small&gt;Published on &lt;time datetime="2024-11-04"&gt;November 4th&lt;/time&gt;&lt;/small&gt;
+    &lt;/p&gt;
+  &lt;/aside&gt;
+  &lt;p&gt;
+    Sometimes when using &lt;code&gt;ModelForm&lt;/code&gt;s, you want to set some fields manually on the instance. Consider for
+    example the case where you have a &lt;code&gt;blog&lt;/code&gt; app with an &lt;code&gt;Article&lt;/code&gt; model, and you want to
+    automatically set the current request's user as the article's author.
+  &lt;/p&gt;
+  &lt;h2&gt;The easy case&lt;/h2&gt;
+  &lt;p&gt;
+    If an article has a single author, then doing this is pretty straightforwad. Let's say we have this model/modelform
+    setup:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;class Article(models.Model):
+    ...  # Fields like title, body, ...
+    author = models.ForeignKey("auth.User", ...)
+
+class ArticleForm(forms.ModelForm):
+    class Meta:
+        model = Article
+        fields = [...]&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    In that case, we can make the &lt;code&gt;ArticleForm&lt;/code&gt; accept a new &lt;code&gt;request&lt;/code&gt; argument, and override the
+    &lt;code&gt;save()&lt;/code&gt; method to set the author manually just before actually saving the object:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;class ArticleForm(forms.ModelForm):
+    def __init__(self, *args, request, **kwargs):
+        self.request = request
+        super().__init__(*args, **kwargs)
+
+    def save(self, *args, **kwargs):
+        self.instance.author = request.user
+        return super().save(*args, **kwargs)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    This works well, but there's actually a shorter way to write this that takes advantage of the fact that Django
+    automatically creates an &lt;code&gt;instance&lt;/code&gt; attribute on the form as part of the init, and will use that instance
+    when saving too (after applying the user-submitted data):
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;class ArticleForm(forms.ModelForm):
+    def __init__(self, *args, request, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.instance.author = request.user&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    That's it. A single method override and now the author will automatically be set to the request's user. Note that
+    this will happen both when creating a new article, but also when updating one. If that's not desired then you should
+    either add some logic to handle that, or use a separate form for creation and update.
+  &lt;/p&gt;
+
+  &lt;h2&gt;The more complicated case&lt;/h2&gt;
+
+  &lt;p&gt;But what if we wanted to support multiple authors per article? The model is easy to write:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;class Article(models.Model):
+    ...
+    authors = models.ManyToManyField("auth.User", ...)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;But how would the form look like? A naive approach that copies the previous example could look like this:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;class ArticleForm(forms.ModelForm):
+    def __init__(self, *args, request, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.instance.authors.add(request.user)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    Unfortunately, this code has some severe issues, including the fact that it raises an exception when trying to use
+    this form for creating a new article:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;Traceback (most recent call last):
+  File "&amp;lt;console&amp;gt;", line 1, in &amp;lt;module&amp;gt;
+  File ".../django/db/models/fields/related_descriptors.py", line 656, in __get__
+    return self.related_manager_cls(instance)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ".../django/db/models/fields/related_descriptors.py", line 1076, in __init__
+    raise ValueError(
+ValueError: "&amp;lt;Article: Article object (None)&amp;gt;" needs to have a value for field "id" before this many-to-many relationship can be used.&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;Moving the logic to &lt;code&gt;save()&lt;/code&gt; helps:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;class ArticleForm(forms.ModelForm):
+    def __init__(self, *args, request, **kwargs):
+        self.request = request
+        super().__init__(*args, **kwargs)
+
+    def save(self, *args, **kwargs):
+        instance = super().save(*args, **kwargs)
+        instance.authors.add(self.request.user)
+        return instance&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    This version works quite well, and depending on the project it's possible we could stop here and call it a day. But
+    it turns out there's still an issue, and it has to do with &lt;code&gt;save()&lt;/code&gt;'s arguments (which I've conveniently
+    been hiding behind this &lt;code&gt;*args, **kwargs&lt;/code&gt; all this time): &lt;code&gt;commit&lt;/code&gt;
+    &lt;a
+      href="https://docs.djangoproject.com/en/stable/topics/forms/modelforms/#the-save-method:~:text=This%20save()%20method%20accepts%20an%20optional%20commit%20keyword%20argument"
+      &gt;[see documentation]&lt;/a
+    &gt;.
+  &lt;/p&gt;
+
+  &lt;h2&gt;Supporting &lt;code&gt;save(commit=False)&lt;/code&gt;&lt;/h2&gt;
+
+  &lt;p&gt;
+    I'm not sure how widely used (or even known) it is, but &lt;code&gt;ModelForm.save()&lt;/code&gt; can take in
+    &lt;code&gt;commit=True/False&lt;/code&gt; and that will change the behavior of the method significantly. When using
+    &lt;code&gt;form.save(commit=True)&lt;/code&gt; (the default), the form will be saved to the database and the new/updated
+    instance will be returned. On the other hand, using &lt;code&gt;save(commit=False)&lt;/code&gt; will only return the instance
+    with all its fields updated with the user-submitted data, but nothing saved in the database.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    Our custom &lt;code&gt;save()&lt;/code&gt; method above breaks that &lt;code&gt;commit=False&lt;/code&gt; feature since the m2m is saved in
+    the database regardless of whether the instance itself was. When using &lt;code&gt;commit=False&lt;/code&gt;, Django will add a
+    callable attribute on the form called &lt;code&gt;save_m2m&lt;/code&gt;, which you're supposed to call yourself after you've
+    manually saved your model to the database. I find that a bit clunky, but that's the documented behavior, so we can
+    hook into it by creating a new &lt;code&gt;save_m2m&lt;/code&gt; callable that will both call the old one and also save our
+    &lt;code&gt;authors&lt;/code&gt; field:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;class ArticleForm(forms.ModelForm):
+    def __init__(self, *args, request, **kwargs):
+        self.request = request
+        super().__init__(*args, **kwargs)
+
+    def save(self, *args, **kwargs):
+        instance = super().save(*args, **kwargs)
+
+        if (old_save_m2m := getattr(self, "save_m2m", None)) is not None:
+            def new_save_m2m():
+                old_save_m2m()
+                instance.authors.add(self.request.user)
+            self.save_m2m = new_save_m2m
+        else:
+            instance.authors.add(self.request.user)
+
+        return instance&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;And if you don't mind using an undocumented API, there's even a shorter way to write this:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;class ArticleForm(forms.ModelForm):
+    def __init__(self, *args, request, **kwargs):
+        self.request = request
+        super().__init__(*args, **kwargs)
+
+    def _save_m2m(self):
+        super()._save_m2m()
+        self.instance.authors.add(self.request.user)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;&lt;small&gt;(Not that I'd encourage using undocumented APIs 😇)&lt;/small&gt;&lt;/p&gt;
+&lt;/article&gt;
+</content>
+    <author>
+      <name>Baptiste Mispelon</name>
+    </author>
+  </entry>
+  <entry>
+    <title>Git search and replace</title>
+    <link href="https://blog.bmispelon.rocks/articles/2024/2024-06-03-git-search-and-replace.html"/>
+    <id>https://blog.bmispelon.rocks/articles/2024/2024-06-03-git-search-and-replace.html</id>
+    <published>2024-06-03T00:00:00Z</published>
+    <updated>2024-06-03T00:00:00Z</updated>
+    <content type="html">&lt;article&gt;
+  &lt;h1&gt;Git search and replace&lt;/h1&gt;
+  &lt;aside class="metadata"&gt;
+    &lt;p class="metadata-pubdate"&gt;
+      &lt;small&gt;Published on &lt;time datetime="2024-06-03"&gt;June 3rd&lt;/time&gt;&lt;/small&gt;
+    &lt;/p&gt;
+  &lt;/aside&gt;
+  &lt;p&gt;
+    Here is a technique for doing a search-and-replace inside a git repository. I find myself doing this a few times a
+    year and it's rare enough that I alwasy forget the exact commands. So I thought I'd write it down here for
+    posterity.
+  &lt;/p&gt;
+
+  &lt;h2&gt;&lt;abbr title="too long; didn't read"&gt;TL;DR&lt;/abbr&gt;&lt;/h2&gt;
+
+  &lt;pre&gt;&lt;code&gt;git grep -l SEARCH | xargs sed -i s/SEARCH/REPLACE/g&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;If you want more details, keep reading.&lt;/p&gt;
+
+  &lt;h2&gt;The problem&lt;/h2&gt;
+
+  &lt;p&gt;
+    Say you're doing a refactor in your code, or you some major overhaul of your documentation, and you find yourself
+    wanting to do a search and replace across all files in your repository.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    Let's say for example that you've been hard at work developing a cool new web framework called
+    &lt;code&gt;jingo&lt;/code&gt; (it stands for "javascript inspired network graph object" in case you were wondering). One day
+    you realize with horror that the name you've chosen is awfully similar to another popular framework. So just to be
+    safe, you decide to rename your project and change its name to &lt;code&gt;flosk&lt;/code&gt; ("forward logic object software
+    kit"). Now it's time to update all your code and documentation!
+  &lt;/p&gt;
+
+  &lt;h2&gt;My solution&lt;/h2&gt;
+
+  &lt;p&gt;
+    I imagine that today's fancy text editors have built-in ways to do these kinds of refactors, but personally I don't
+    use a fancy text editor and I think it's useful to know how to do this "by hand".
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    My solution is to break the problem into two parts. First, find all the occurences of the text I want to remove
+    (&lt;code&gt;jingo&lt;/code&gt; in my example from earlier), then replace that text with the new one (&lt;code&gt;flosk&lt;/code&gt;).
+  &lt;/p&gt;
+
+  &lt;h3&gt;Search with &lt;code&gt;git grep ...&lt;/code&gt;&lt;/h3&gt;
+
+  &lt;p&gt;
+    The classic tool for finding text in a series of files is &lt;code&gt;grep&lt;/code&gt;, but in this case I will use
+    &lt;code&gt;git grep&lt;/code&gt; because it has some useful defaults when dealing with a git repository. In theory all the
+    examples should work using plain &lt;code&gt;grep&lt;/code&gt; but might require a bit of extra work.
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;git grep jingo&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    This will find all occurences of &lt;code&gt;jingo&lt;/code&gt; in any file inside the git repository, and show (by default) the
+    name of the file and the line that contains the text.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    I my case I don't want to see the match, just the list of files. That's what the
+    &lt;code&gt;--files-with-match&lt;/code&gt; flag is for (&lt;code&gt;-l&lt;/code&gt; for short):
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;git grep -l jingo&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;h3&gt;Replace with &lt;code&gt;sed&lt;/code&gt;&lt;/h3&gt;
+
+  &lt;p&gt;
+    The classic tool for doing search-and-replace inside a file is the unix utility &lt;code&gt;sed&lt;/code&gt;. It's a powerful
+    tool but it can also be a little tricky to use. It has its own mini language to write commands that modify the file
+    you give it in different ways. It calls those commands "expressions", and the first letter of the expression tells
+    you what kind of operation is done. In our case we will use the &lt;code&gt;s&lt;/code&gt; command which stands for
+    "substitute". I have also used the &lt;code&gt;d&lt;/code&gt; command in the past for deleting specific lines.
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt; sed 's/jingo/flosk/g' README.txt&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    By default, &lt;code&gt;sed&lt;/code&gt; will not modify any files you give it. Instead it applies the command you gave it to
+    the file, and shows the modified version leaving the original file intact. For our use case we actually want to
+    modfiy the file, so we need to give &lt;code&gt;sed&lt;/code&gt; the &lt;code&gt;--in-place&lt;/code&gt; option (&lt;code&gt;-i&lt;/code&gt;
+    for short):
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt; sed -i 's/jingo/flosk/g' README.txt&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;h3&gt;Putting it together with &lt;code&gt;xargs&lt;/code&gt;&lt;/h3&gt;
+
+  &lt;p&gt;
+    We're almost there! With &lt;code&gt;git grep ...&lt;/code&gt; we can find the files, and with &lt;code&gt;sed ...&lt;/code&gt; we can
+    search/replace inside one file. All we need is to "glue" the two together and run the &lt;code&gt;sed&lt;/code&gt; command on
+    each file. One way I like to do it is using the &lt;code&gt;xargs&lt;/code&gt; command:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;git grep -l jingo | xargs sed -i 's/jingo/flosk/g'&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;h2&gt;Going a bit further&lt;/h2&gt;
+
+  &lt;h3&gt;Dealing with files containing spaces in their names&lt;/h3&gt;
+
+  &lt;p&gt;
+    Because of the way &lt;code&gt;xargs&lt;/code&gt; works, the command I've shown will break if any of the matched files contains
+    a space in their name. For example if the file is called &lt;code&gt;READ ME.txt&lt;/code&gt; then &lt;code&gt;xargs&lt;/code&gt; will tell
+    &lt;code&gt;sed&lt;/code&gt; to open two files: &lt;code&gt;READ&lt;/code&gt; and &lt;code&gt;ME.txt&lt;/code&gt;. One solution for this is to tell
+    &lt;code&gt;git grep&lt;/code&gt; to use a special character to separate the file names (instead of putting one file name per
+    line), and to tell &lt;code&gt;xargs&lt;/code&gt; to use that same character for splitting the list of files names back into
+    individual ones before passing them to &lt;code&gt;sed&lt;/code&gt;. The character used is called a "null byte" and is normally
+    not allowed in file names.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    The option is called &lt;code&gt;--null&lt;/code&gt; for both &lt;code&gt;git grep&lt;/code&gt; and &lt;code&gt;xargs&lt;/code&gt;, but unfortunately
+    its short version is not the same with both tools: &lt;code&gt;git grep&lt;/code&gt; uses &lt;code&gt;-z&lt;/code&gt; while
+    &lt;code&gt;xargs&lt;/code&gt; uses &lt;code&gt;-0&lt;/code&gt; (a zero).
+  &lt;/p&gt;
+
+  &lt;p&gt;Here's how our example looks like now:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;git grep -lz jingo | xargs -0 sed -i 's/jingo/flosk/g'&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;h3&gt;Restricting the target files&lt;/h3&gt;
+
+  &lt;p&gt;
+    Because we use &lt;code&gt;git grep&lt;/code&gt;, we can use its full power when it comes to targetting specific files (what git
+    calls "&lt;a href="https://git-scm.com/docs/git-grep#Documentation/git-grep.txt-ltpathspecgt82308203"&gt;pathspecs&lt;/a&gt;").
+    For example let's say we only want to target python files:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;git grep -l jingo -- '*.py' | xargs sed -i 's/jingo/flosk/g'&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;h3&gt;More complex search/replace with regular expressions&lt;/h3&gt;
+
+  &lt;p&gt;
+    So far we've used fixed strings for both search and replace, but sometimes you need a bit of extra power. Luckily
+    both git and sed have support for regular expressions: git has &lt;code&gt;--extended-regexp&lt;/code&gt; while sed has
+    &lt;code&gt;--regexp-extended&lt;/code&gt;. It's a bit annoying that they use different names, but luckily the short name of the
+    flag is the same for both: &lt;code&gt;-E&lt;/code&gt;.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    As an example, here is how you can replace all instances of both &lt;code&gt;jingo&lt;/code&gt; and &lt;code&gt;JINGO&lt;/code&gt; with
+    &lt;code&gt;flosk&lt;/code&gt;:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;git grep -l -E '(jingo|JINGO)' | xargs sed -i -E 's/(jingo|JINGO)/flosk/g'&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    To use capture groups in the replacement sed command, we can use &lt;code&gt;\1&lt;/code&gt; (and &lt;code&gt;\2&lt;/code&gt;, ... if there
+    is more than one capture group):
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;git grep -l -E '(jingo|JINGO)' | xargs sed -i -E 's/(jingo|JINGO)/the framework formerly known as \1/g'&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;hr /&gt;
+
+  &lt;p&gt;I hope that helps, happy refactoring!&lt;/p&gt;
+&lt;/article&gt;
+</content>
+    <author>
+      <name>Baptiste Mispelon</name>
+    </author>
+  </entry>
+  <entry>
+    <title>Django: Getting a full model instance from a Subquery</title>
+    <link href="https://blog.bmispelon.rocks/articles/2024/2024-05-09-django-getting-a-full-model-instance-from-a-subquery.html"/>
+    <id>https://blog.bmispelon.rocks/articles/2024/2024-05-09-django-getting-a-full-model-instance-from-a-subquery.html</id>
+    <published>2024-05-09T00:00:00Z</published>
+    <updated>2024-05-09T00:00:00Z</updated>
+    <content type="html">&lt;article&gt;
+  &lt;h1&gt;Django: Getting a full model instance from a Subquery&lt;/h1&gt;
+  &lt;aside class="metadata"&gt;
+    &lt;p class="metadata-pubdate"&gt;
+      &lt;small&gt;Published on &lt;time datetime="2024-05-09"&gt;May 9th&lt;/time&gt;&lt;/small&gt;
+    &lt;/p&gt;
+  &lt;/aside&gt;
+  &lt;p&gt;
+    This one might be a bit niche, but it took me a bit of trial-and-error and I'm hoping that the technique I describe
+    might be generic enough to be reusable. Who knows, if there's enough interest I could even turn it into a library!
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    &lt;strong&gt;EDIT:&lt;/strong&gt; I've received some positive feedback
+    &lt;a href="https://mastodon.social/@bmispelon/112411065947276818"&gt;on Mastodon&lt;/a&gt;, so I took some time to package
+    things up and put them on github:
+    &lt;strong&gt;&lt;a href="https://github.com/bmispelon/django-model-subquery"&gt;django-model-subquery&lt;/a&gt;&lt;/strong
+    &gt;. I'm still not 100% sure about the name, if you've got good ideas let me know (bonus points for puns).
+  &lt;/p&gt;
+
+  &lt;h2&gt;Context&lt;/h2&gt;
+
+  &lt;p&gt;
+    For a bit of context, my current &lt;code&gt;$DAY_JOB&lt;/code&gt; involves a lot of converting hand-written SQL into an
+    equivalent (or near enough) Django ORM version. In particular, I've been building a lot of
+    &lt;a href="https://docs.djangoproject.com/en/stable/ref/models/expressions/#subquery-expressions"
+      &gt;&lt;code&gt;Subquery&lt;/code&gt; annotations&lt;/a
+    &gt;
+    for querysets and I've come up with a useful technique that I wanted to share.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    If you've ever used the ORM's &lt;code&gt;Subquery&lt;/code&gt; you might know that it's limited to returning a single column,
+    but I've figured out a technique that lets me get full model instances out of a single subquery. In order for me to
+    explain I think it's easier if I start small and build things up. So first things first, let's start with two
+    convenient and somewhat realistic models:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;from datetime import date
+
+from django.db import models
+
+class Book(models.Model):
+    title = models.CharField(max_length=100)
+    rating = models.IntegerField(blank=True, null=True)
+    published = models.DateField(default=date.today)
+
+
+class Person(models.Model):
+    name = models.CharField(max_length=100)
+    birth = models.DateField(default=date.today)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    For the sake of this example, let's say I want to get a queryset of &lt;code&gt;Person&lt;/code&gt; instances, and for every
+    person I want to get the most popular book published the year they were born. I know, I know, it's a little
+    contrived but that's the best I could come up with, so please bear with me.
+  &lt;/p&gt;
+
+  &lt;h2&gt;Attempt #1: Using &lt;code&gt;Subquery&lt;/code&gt;&lt;/h2&gt;
+
+  &lt;p&gt;
+    For our first attempt, let's start by creating a custom queryset class for our &lt;code&gt;Person&lt;/code&gt; model, with a
+    custom &lt;code&gt;with_book()&lt;/code&gt; method that annotates the queryset with the information we want:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;from django.db.models.functions import ExtractYear
+
+class PersonQuerySet(models.QuerySet):
+    def with_book(self):
+        """
+        Annotate each person in the queryset with the best rated book of the
+        year they were born.
+        """
+        year = ExtractYear(models.OuterRef("birth"))
+        all_books = Book.objects.filter(published__year=year).order_by("-rating")
+        best_book = models.Subquery(all_books.values("title")[:1])
+        return self.annotate(book=best_book)
+
+
+class Person(models.Model):
+    ...  # same fields as before (name and birth)
+    objects = PersonQuerySet.as_manager()&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    Now when we do &lt;code&gt;Person.objects.with_book()&lt;/code&gt; each instance in the resulting queryset will have a
+    &lt;code&gt;book&lt;/code&gt; attribute containing the title of the best rated book published the year that person was born (or
+    &lt;code&gt;None&lt;/code&gt; if no books were published that year). That's a pretty standard use of &lt;code&gt;Subquery&lt;/code&gt; so
+    far, and it works great. But what if we wanted to get both the book's title &lt;strong&gt;AND&lt;/strong&gt; its rating for
+    example? If you're like me, you might try to simply add the extra field to the subquery, like so:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;best_book = Subquery(all_books.values("title", "rating")[:1])&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    But unfortunately, that doesn't work. Django's &lt;code&gt;Subquery&lt;/code&gt; can only deal with a single column as far as I
+    can tell.
+  &lt;/p&gt;
+
+  &lt;h2&gt;Attempt #2: JSON to the rescue&lt;/h2&gt;
+
+  &lt;p&gt;
+    This is where I had my first &lt;del&gt;brilliant&lt;/del&gt; devious idea. How do you turn two values into a single one? You
+    stuff them both into a JSON object of course!
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;from django.db.models.functions import ExtractYear, JSONObject
+
+class PersonQuerySet(models.QuerySet):
+    def with_book(self):
+        """
+        Annotate each person in the queryset with the best rated book of the
+        year they were born.
+        """
+        year = ExtractYear(models.OuterRef("birth"))
+        all_books = Book.objects.filter(published__year=year).order_by("-rating")
+        json_obj = JSONObject(title="title", rating="rating")
+        best_book = models.Subquery(all_books.values_list(json_obj)[:1])
+        return self.annotate(book=best_book)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    Now all my &lt;code&gt;Person&lt;/code&gt; instances are annotated with a &lt;code&gt;book&lt;/code&gt; attribute that contains a
+    dictionnary with two keys: &lt;code&gt;title&lt;/code&gt; and &lt;code&gt;rating&lt;/code&gt;. Amazing! But wait I hear you say, why stop
+    only at those two fields? You can easily stuff &lt;strong&gt;everything&lt;/strong&gt; in there, can't you?
+  &lt;/p&gt;
+
+  &lt;p&gt;You sure can:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;json_obj = models.JSONObject(id="id", title="title", rating="rating", published="published")&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    Works like a charm. Well for some definition of "charm" anyways. JSON only supports a limited number of types and in
+    particular it does not do dates so our &lt;code&gt;published&lt;/code&gt; field is returned as a string. That's annoying I
+    guess, but not the end of the world right? Turns out that's fixable but it takes a bit of work, I'll get to it a bit
+    later.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    For now, let's fix something that's easy. If you're like me you might have found it annoying having to list all the
+    fields twice. There's gotta be a better way, and indeed that's where the &lt;code&gt;Model._meta&lt;/code&gt; API comes to the
+    rescue:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;json_obj = JSONObject(**{f.name: f.name for f in Book._meta.get_fields()})&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    This has all the same limitations as before, but at least it's shorter and it's easily adatable to another model.
+    But what if I told you we could do better? I did after all promise actual model instances in the intro, not just
+    dictionaries.
+  &lt;/p&gt;
+
+  &lt;h2&gt;Attempt #3: JSON + custom output field&lt;/h2&gt;
+
+  &lt;p&gt;
+    I often think of the ORM (and various parts of Django actually) in terms of layers. One layer is my database with
+    its tables, columns, and rows. At the other end there's the Django model layer with Python objects and attributes
+    with rich data types. The trick then becomes finding the right class and the right methods that sits between those
+    layers and that lets me convert things from one layer to another.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    With the ORM, this class is often the &lt;code&gt;models.Field&lt;/code&gt; and its various subclasses. They're the ones who
+    "know" how to convert from a database column type into an appropriate Python type. And if you've spent any time with
+    Django's database functions you've probably had to sprinkle some &lt;code&gt;output_field=SomeDjangoModelField()&lt;/code&gt; to
+    get things working.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    And it turns out that &lt;code&gt;output_field&lt;/code&gt; is the answer to our current problem as well. The idea is to create
+    a custom field class that can convert the JSON object returned by the database (containing a key/value pair for each
+    field of the model) into a model instance:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;class BookJSONModelField(models.JSONField):
+    """
+    Instantiate an actual Book instance from a JSON object containing its fields.
+    """
+    def from_db_value(self, value, expression, connection):
+        value = super().from_db_value(value, expression, connection)
+        # at this point, value is a dict with one key/value pair per field
+        return Book(**value)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;With this new field, all we need to do is plug it in the &lt;code&gt;Subquery&lt;/code&gt; call like so:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;best_book = models.Subquery(all_books.values_list(json_obj)[:1], output_field=BookJSONModelField())&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    And voilà, now our &lt;code&gt;book&lt;/code&gt; annotation on the queryset gives actual model instances! Neat, right? There are
+    still a few limitations though. The big one is that we still haven't solved the issue with JSON having a limited
+    number of types: even though we do get a &lt;code&gt;Book&lt;/code&gt; instance, if we look at &lt;code&gt;book.published&lt;/code&gt; then
+    we see it's still a string and not a date object.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    Luckily that's not too hard to solve. Remember when I said fields were the one that could convert between data
+    types? Turns out all fields have a nifty &lt;code&gt;to_python()&lt;/code&gt; method that will do the conversion for us:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;def from_db_value(self, value, expression, connection):
+    value = super().from_db_value(value, expression, connection)
+    # at this point, value is a dict with one key/value pair per field
+    return Book(**{k: Book._meta.get_field(k).to_python(v) for k, v in value.items()})&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    So there we have it. Just like I promised: a &lt;code&gt;Subquery&lt;/code&gt; that returns actual model instances. I hope you
+    found the journey interesting and that you learned something from it.
+  &lt;/p&gt;
+
+  &lt;h2&gt;Possible further improvements&lt;/h2&gt;
+
+  &lt;p&gt;
+    This technique is of course not perfect, and I'm not even sure it's very useful outside of some very specific
+    situations (though if you do end up using it &lt;a href="/about.html"&gt;please do let me know&lt;/a&gt;).
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    One feature that could be pretty neat would be to support &lt;code&gt;ForeignKey&lt;/code&gt; fields via some kind of recursive
+    JSON structure. I haven't tried to implement that but I think it should be doable without too much trouble (&lt;em
+      &gt;famous last words&lt;/em
+    &gt;)
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    It could also be cool to not have to load all the fields in the JSON object, and mark missing fields as
+    &lt;a href="https://docs.djangoproject.com/en/stable/ref/models/querysets/#defer"&gt;deferred&lt;/a&gt; so they're loaded
+    automatically from the db when accessed on the instance. I've actually implemented a proof of concept of this one
+    and it was suprisingly easy (I've left it as an exercise to the reader 😃).
+  &lt;/p&gt;
+
+  &lt;p&gt;What do you think? Is that something that would be worth packaging up into a 3rd-party library?&lt;/p&gt;
+
+  &lt;hr /&gt;
+  &lt;p&gt;For ease of copy-pasting, here's how it looks like all put together:&lt;/p&gt;
+
+  &lt;pre id="tldr"&gt;&lt;code&gt;from datetime import date
+
+from django.db import models
+from django.db.models.functions import ExtractYear, JSONObject
+
+
+class BookJSONModelField(models.JSONField):
+    """
+    Instantiate an actual Book instance from a JSON object containing its fields.
+    """
+    def from_db_value(self, value, expression, connection):
+        value = super().from_db_value(value, expression, connection)
+        # at this point, value is a dict with one key/value pair per field
+        return Book(**{k: Book._meta.get_field(k).to_python(v) for k, v in value.items()})
+
+
+class PersonQuerySet(models.QuerySet):
+    def with_book(self):
+        """
+        Annotate each person in the queryset with the best rated book of the
+        year they were born.
+        """
+        year = ExtractYear(models.OuterRef("birth"))
+        all_books = Book.objects.filter(published__year=year).order_by("-rating")
+        json_obj = JSONObject(**{f.name: f.name for f in Book._meta.get_fields()})
+        best_book = models.Subquery(all_books.values_list(json_obj)[:1], output_field=BookJSONModelField())
+        return self.annotate(book=best_book)
+
+
+class Book(models.Model):
+    title = models.CharField(max_length=100)
+    rating = models.IntegerField(blank=True, null=True)
+    published = models.DateField(default=date.today)
+
+
+class Person(models.Model):
+    name = models.CharField(max_length=100)
+    birth = models.DateField(default=date.today)
+
+    objects = PersonQuerySet.as_manager()&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;&lt;small&gt;(the above snippet is in the public domain, feel free to adapt/reuse it)&lt;/small&gt;&lt;/p&gt;
+&lt;/article&gt;
+</content>
+    <author>
+      <name>Baptiste Mispelon</name>
+    </author>
+  </entry>
+  <entry>
+    <title>Optional subfactories for Factory Boy</title>
+    <link href="https://blog.bmispelon.rocks/articles/2024/2024-05-03-optional-subfactories-for-factory_boy.html"/>
+    <id>https://blog.bmispelon.rocks/articles/2024/2024-05-03-optional-subfactories-for-factory_boy.html</id>
+    <published>2024-05-03T00:00:00Z</published>
+    <updated>2024-05-03T00:00:00Z</updated>
+    <content type="html">&lt;article&gt;
+  &lt;h1&gt;Optional subfactories for Factory Boy&lt;/h1&gt;
+  &lt;aside class="metadata"&gt;
+    &lt;p class="metadata-pubdate"&gt;
+      &lt;small&gt;Published on &lt;time datetime="2024-05-03"&gt;May 3rd&lt;/time&gt;&lt;/small&gt;
+    &lt;/p&gt;
+  &lt;/aside&gt;
+
+  &lt;p&gt;
+    I often use a library called &lt;a href="https://factoryboy.readthedocs.io/en/stable/"&gt;Factory Boy&lt;/a&gt; to create Django
+    models in my tests. It works fine and I mostly like it but there's one thing that annoys me when it comes to
+    nullable foreign keys on Django models. Let's set up some example models to explain:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;from django.db import models
+
+class Author(models.Model):
+    name = models.CharField(max_length=100)
+    email = models.EmailField(required=False)
+
+
+class Article(models.Model):
+    author = models.ForeignKey("Author", on_delete=models.CASCADE, blank=True, null=True)
+    title = models.CharField(max_length=100)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    Nothing extraordinary here, just two models linked by an optional foreign key. With Factory Boy (whose importable
+    module is called &lt;code&gt;factory&lt;/code&gt; for some reason), you create &lt;code&gt;Factory&lt;/code&gt; classes for your models, and
+    a foreign key relationship is typically represented using a &lt;code&gt;SubFactory&lt;/code&gt; like so:
+  &lt;/p&gt;
+  &lt;pre&gt;&lt;code&gt;from factory.django import DjangoModelFactory
+from factory import SubFactory
+
+from .models import Article, Author
+
+class AuthorFactory(DjangoModelFactory):
+    class Meta:
+        model = Author
+
+
+class ArticleFactory(DjangoModelFactory):
+    author = SubFactory(Author)
+
+    class Meta:
+        model = Article&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    That works great, and when you have those factories you can easily create two related instances in a single call to
+    the factory:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;&amp;gt;&amp;gt;&amp;gt; article = ArticleFactory.create(title="Test Article", author__name="Baptiste")
+&amp;gt;&amp;gt;&amp;gt; article.author is None
+False
+&amp;gt;&amp;gt;&amp;gt; article.author.name
+'Baptiste'&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    So far so expected. But a &lt;code&gt;SubFactory&lt;/code&gt; is not "smart" enough to know that the foreign key is optional,
+    and it will &lt;strong&gt;always&lt;/strong&gt; created a related object, even if you don't ask for one:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;&amp;gt;&amp;gt;&amp;gt; article = ArticleFactory.create(title="Test Article")
+&amp;gt;&amp;gt;&amp;gt; article.author is None
+False
+&amp;gt;&amp;gt;&amp;gt; article.author.name
+''&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    I'm not a big fan of this behavior, because I find it creates too many objects and often makes my tests more verbose
+    than I'd like. Looking for a solution, I soon found a
+    &lt;a href="https://github.com/FactoryBoy/factory_boy/issues/900"&gt;closed issue&lt;/a&gt; on github where the library author
+    suggests using something called a &lt;code&gt;Trait&lt;/code&gt;. But to be honest I never fully understood what traits were,
+    and I always thought there had to be a simpler way.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    After some hours of reading the code of the library and trying out several approaches, I ended up with something
+    which I think works pretty well:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;from factory.django import DjangoModelFactory
+from factory import SubFactory
+
+from .models import Article, Author
+
+
+class OptionalSubFactory(SubFactory):
+    def __init__(self, factory, **defaults):
+        super().__init__(factory)
+        self.defaults = defaults
+
+    def evaluate(self, instance, step, extra):
+        if not extra:
+            return None
+        kwargs = {**self.defaults, **extra}
+        return super().evaluate(instance, step, kwargs)
+
+
+class AuthorFactory(DjangoModelFactory):
+    class Meta:
+        model = Author
+
+
+class ArticleFactory(DjangoModelFactory):
+    author = OptionalSubFactory(Author)
+
+    class Meta:
+        model = Article&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    &lt;small&gt;(In case you wanted to reuse this by any chance, the code in the above block is public domain.)&lt;/small&gt;
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    With this new &lt;code&gt;OptionalSubFactory&lt;/code&gt;, related objects are created when you specify any of their arguments
+    (just like with &lt;code&gt;Factory&lt;/code&gt;):
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;&amp;gt;&amp;gt;&amp;gt; article = ArticleFactory.create(title="Test Article", author__name="Baptiste")
+&amp;gt;&amp;gt;&amp;gt; article.author is None
+False
+&amp;gt;&amp;gt;&amp;gt; article.author.name
+'Baptiste'&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;But if you leave out its arguments, then no object is created and the foreign key is set to &lt;code&gt;None&lt;/code&gt;:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;&amp;gt;&amp;gt;&amp;gt; article = ArticleFactory.create(title="Test Article")
+&amp;gt;&amp;gt;&amp;gt; article.author is None
+True
+&amp;gt;&amp;gt;&amp;gt; article.author.name
+Traceback (most recent call last):
+  File "&amp;lt;console&amp;gt;", line 1, in &amp;lt;module&amp;gt;
+AttributeError: 'NoneType' object has no attribute 'name'&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    Et voilà! The one downside I found and which I couldn't find a fix for is that you
+    &lt;strong&gt;have to&lt;/strong&gt; pass an explicit argument in order to create a related object. In some cases it would be
+    nice to be able to write something like &lt;code&gt;ArticleFactory.create(profile=True)&lt;/code&gt; and have the
+    &lt;code&gt;profile&lt;/code&gt; subfactory be called with all its default arguments. For now, if I want that behavior I have to
+    do something like:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;&amp;gt;&amp;gt;&amp;gt; ArticleFactory.create(profile=ProfileFactory.create())&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;That's a bit annoying, but it's a tradeoff I can live with.&lt;/p&gt;
+&lt;/article&gt;
+</content>
+    <author>
+      <name>Baptiste Mispelon</name>
+    </author>
+  </entry>
+  <entry>
+    <title>A Syntax Highlight Mystery</title>
+    <link href="https://blog.bmispelon.rocks/articles/2024/2024-04-26-a-syntax-highlight-mystery.html"/>
+    <id>https://blog.bmispelon.rocks/articles/2024/2024-04-26-a-syntax-highlight-mystery.html</id>
+    <published>2024-04-26T00:00:00Z</published>
+    <updated>2024-04-26T00:00:00Z</updated>
+    <content type="html">&lt;article&gt;
+  &lt;h1&gt;A Syntax Highlight Mystery&lt;/h1&gt;
+  &lt;aside class="metadata"&gt;
+    &lt;p class="metadata-pubdate"&gt;
+      &lt;small&gt;Published on &lt;time datetime="2024-04-26"&gt;April 26th&lt;/time&gt;&lt;/small&gt;
+    &lt;/p&gt;
+  &lt;/aside&gt;
+
+  &lt;p&gt;
+    While writing some documentation for Django today, I noticed something that I thought was a bit weird inside one of
+    the
+    &lt;a
+      href="https://github.com/django/django/blob/828b94b178736f7882cc6e5cd86b5c8e84b62ece/docs/intro/overview.txt#L73-L80"
+      &gt;code samples&lt;/a
+    &gt;. Can you spot it?
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;.. code-block:: pycon
+
+    # Import the models we created from our "news" app
+    &amp;gt;&amp;gt;&amp;gt; from news.models import Article, Reporter
+
+    # No reporters are in the system yet.
+    &amp;gt;&amp;gt;&amp;gt; Reporter.objects.all()
+    &amp;lt;QuerySet []&amp;gt;&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    I must have scrolled past that section a bunch of times and never noticed it, but once I saw it I couldn't un-see it
+    and it really puzzled me.
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;.. code-block:: pycon&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    What's that &lt;a href="https://pycon.org/"&gt;pycon&lt;/a&gt; doing there? Surely whoever wrote that made a funny typo and
+    meant to write &lt;code&gt;python&lt;/code&gt;, right? What does a Python conference like Pycon have to do with syntax
+    highlighting? I cobbled together some quick bash commands to count the usage of &lt;code&gt;pycon&lt;/code&gt; vs.
+    &lt;code&gt;python&lt;/code&gt; in the docs, and to my &lt;del&gt;horror&lt;/del&gt; suprise I got the following results:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;$ git grep -Eo "code-block:: py(c|th)on" -- docs/ | cut -d: -f4 | sort | uniq -c
+    959  pycon
+    133  python&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;That's almost 10 times more &lt;code&gt;pycon&lt;/code&gt;s than &lt;code&gt;python&lt;/code&gt;s! What's going on here?&lt;/p&gt;
+
+  &lt;p&gt;
+    Luckily I just happened to be in a
+    &lt;a href="https://micro.webology.dev/2024/04/24/office-hours-on.html"&gt;zoom call with some smart people&lt;/a&gt; at the
+    time, and one of them quickly figured out that "pycon" stands for &lt;strong&gt;py&lt;/strong&gt;thon &lt;strong&gt;con&lt;/strong&gt;sole
+    in that context. And indeed, all those code blocks using &lt;code&gt;code-block:: pycon&lt;/code&gt; are examples of how things
+    look like in a Python console, whereas &lt;code&gt;code-block:: python&lt;/code&gt; is used for actual code samples (the ones
+    you'd put in a &lt;code&gt;.py&lt;/code&gt; file).
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    The authoritative answer came from the documentation for pygments, the library that does the syntax highlighting
+    under the hood. Their &lt;a href="https://pygments.org/docs/lexers/"&gt;"Available lexers"&lt;/a&gt; page conveniently lists all
+    the languages it knows how to highlight, and a quick control-F on that page quickly reveals that
+    &lt;code&gt;pycon&lt;/code&gt; is indeed a "short name" for the &lt;code&gt;PythonConsoleLexer&lt;/code&gt; which is used:
+  &lt;/p&gt;
+
+  &lt;blockquote cite="https://pygments.org/docs/lexers/#pygments.lexers.python.PythonConsoleLexer"&gt;
+    For Python console output or doctests [...]
+  &lt;/blockquote&gt;
+
+  &lt;p&gt;&lt;strong&gt;Mystery solved!&lt;/strong&gt;&lt;/p&gt;
+
+  &lt;p&gt;
+    Even knowing what &lt;code&gt;pycon&lt;/code&gt; is used for now, I still think it's not a great name as I believe most people
+    would not associate it with "python console". So I quickly put together a
+    &lt;a href="https://github.com/pygments/pygments/pull/2697"&gt;PR for the pygments project&lt;/a&gt; to add an alias for it (I
+    picked &lt;code&gt;python-console&lt;/code&gt;). If that PR is accepted, I plan to suggest switching to this alias in Django's
+    documentation.
+  &lt;/p&gt;
+&lt;/article&gt;
+</content>
+    <author>
+      <name>Baptiste Mispelon</name>
+    </author>
+  </entry>
+  <entry>
+    <title>CSS desaturated background image</title>
+    <link href="https://blog.bmispelon.rocks/articles/2024/2024-04-12-css-desaturated-background-image.html"/>
+    <id>https://blog.bmispelon.rocks/articles/2024/2024-04-12-css-desaturated-background-image.html</id>
+    <published>2024-04-12T00:00:00Z</published>
+    <updated>2024-04-12T00:00:00Z</updated>
+    <content type="html">&lt;article x-data="{opacity: 80, bgcolor: getInitialBgColor()}" x-effect="updateRootCSSProperties($data)"&gt;
+  &lt;h1&gt;CSS desaturated background image&lt;/h1&gt;
+  &lt;aside class="metadata"&gt;
+    &lt;p class="metadata-pubdate"&gt;
+      &lt;small&gt;Published on &lt;time datetime="2024-04-12"&gt;April 12th&lt;/time&gt;&lt;/small&gt;
+    &lt;/p&gt;
+  &lt;/aside&gt;
+  &lt;p&gt;
+    When I started this blog I thought it'd be fun to have an image as the header's background. This led me of course to
+    spending way too much time hunting for the perfect background image (much more fun than writing actual articles,
+    isn't it?). I quickly realized that using a plain image or photo wasn't going to work so well since it makes the
+    text on top of the image hard to read a lot of the times.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    The solution I found was to desaturate the image, but because I'm not very good with image manipulation software I
+    thought I would try and find a way to do that in pure CSS. This would also let me experiment with trying to find the
+    right desaturation amount.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    A quick search later (my browser history reveals I used the search prompt "css transparency effect background
+    image") I ended up on a
+    &lt;a
+      href="https://stackoverflow.com/questions/62033155/how-to-add-transparency-to-a-background-image-html-css/62033585#62033585"
+      &gt;promising stackoverflow answer&lt;/a
+    &gt;.
+  &lt;/p&gt;
+
+  &lt;p&gt;The idea is to create a stack of two background "images":&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;header {
+  background:
+    /* 1. a semi-transparent overlay */,
+    /* 2. the actual image we want to use */;
+}&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    The clever bit of this solution is the overlay "image" which is created in pure CSS by (ab)using the
+    &lt;a href="https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient"
+      &gt;&lt;code&gt;linear-gradient&lt;/code&gt; function&lt;/a
+    &gt;. Normally you use &lt;code&gt;linear-gradient(color1, color2)&lt;/code&gt; to create a background where the color smoothly
+    shifts from color1 to color2 (like this one going from red to yellow:
+    &lt;span style="background: linear-gradient(red, yellow)"&gt;   &lt;/span&gt;). By using
+    &lt;code&gt;linear-gradient(color1, color1)&lt;/code&gt; we get a background in a single color (because it shifts from itself to
+    itself), and that background will scale to whatever dimensions necessary. The final piece of the puzzle is that we
+    can use a transparent color, using the &lt;code&gt;#RRGGBBAA&lt;/code&gt; notation for example.
+  &lt;/p&gt;
+
+  &lt;h2&gt;Live demo&lt;/h2&gt;
+
+  &lt;p&gt;
+    Here's how it looks like in practice (you can adjust the transparency using the slider and pick a different base
+    color):
+  &lt;/p&gt;
+
+  &lt;div id="demo"&gt;
+    &lt;p class="box"&gt;Sample text&lt;/p&gt;
+    &lt;fieldset&gt;
+      &lt;label for="opacity"&gt;Opacity:&lt;/label&gt;
+      &lt;input name="opacity" type="range" min="0" max="100" step="10" x-model="opacity" /&gt;
+      &lt;span x-text="opacity"&gt;&lt;/span&gt;%
+    &lt;/fieldset&gt;
+    &lt;fieldset&gt;
+      &lt;label for="basecolor"&gt;Base color (RGB):&lt;/label&gt;
+      &lt;input name="basecolor" type="color" x-model="bgcolor" /&gt;
+      &lt;code x-text="bgcolor"&gt;&lt;/code&gt;
+    &lt;/fieldset&gt;
+    &lt;pre&gt;&lt;code&gt;header {
+  background:
+    linear-gradient(&lt;span x-text="rgbastr($data)"&gt;&lt;/span&gt;, &lt;span x-text="rgbastr($data)"&gt;&lt;/span&gt;),
+    url("/path/to/background.jpeg");
+}&lt;/code&gt;&lt;/pre&gt;
+  &lt;/div&gt;
+
+  &lt;h2&gt;Further improvements&lt;/h2&gt;
+
+  &lt;h3&gt;CSS variable&lt;/h3&gt;
+  &lt;p&gt;One easy win is to use a CSS variable to avoid having to declare the color twice:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;header {
+  --overlay: &lt;span x-text="rgbastr($data)"&gt;&lt;/span&gt;;
+
+  background:
+    linear-gradient(var(--overlay), var(--overlay)),
+    url("/path/to/background.jpeg");
+}&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;h3&gt;Light/Dark mode&lt;/h3&gt;
+
+  &lt;p&gt;Now that we have a CSS variable, it's trivial to add support for light/dark mode:&lt;/p&gt;
+
+  &lt;pre x-show="!isDarkMode()"&gt;&lt;code&gt;header {
+  /* light mode by default */
+  --overlay: &lt;span x-text="rgbastr($data)"&gt;&lt;/span&gt;;
+
+  background:
+    linear-gradient(var(--overlay), var(--overlay)),
+    url("/path/to/background.jpeg");
+}
+
+@media only screen and (prefers-color-scheme: dark) {
+  /* dark mode variant: only the color needs to be redefined */
+  --overlay: #13171fa0;
+}&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;pre x-show="isDarkMode()"&gt;&lt;code&gt;header {
+  /* dark mode by default */
+  --overlay: &lt;span x-text="rgbastr($data)"&gt;&lt;/span&gt;;
+
+  background:
+    linear-gradient(var(--overlay), var(--overlay)),
+    url("/path/to/background.jpeg");
+}
+
+@media only screen and (prefers-color-scheme: light) {
+  /* light mode variant: only the color needs to be redefined */
+  --overlay: #ffffffcc;
+}&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;h3&gt;image-set()&lt;/h3&gt;
+
+  &lt;p&gt;
+    One last improvement I made on the site was to use the
+    &lt;a href="https://developer.mozilla.org/en-US/docs/Web/CSS/image/image-set"&gt;&lt;code&gt;image-set()&lt;/code&gt; function&lt;/a&gt;
+    to provide browsers that support it with alternative image formats. &lt;code&gt;image-set()&lt;/code&gt; is quite powerful and
+    can serve different files based on screen resolution, screen density, or image format support. I decided to only use
+    the different image formats since it was easier for me to manage (and I picked the formats avif, webp and jpeg
+    because that seemed like a good idea):
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;header {
+  --overlay: &lt;span x-text="rgbastr($data)"&gt;&lt;/span&gt;;
+
+  /* fallback for browsers that don't support image-set() */
+  background:
+    linear-gradient(var(--overlay), var(--overlay)),
+    url("/path/to/background.jpeg");
+
+  /* firefox currently only supports the non-standard -webkit-image-set() */
+  background:
+    linear-gradient(var(--overlay), var(--overlay)),
+    -webkit-image-set(
+      url("/path/to/background.avif") type("image/avif"),
+      url("/path/to/background.webp") type("image/webp"),
+      url("/path/to/background.jpeg") type("image/jpeg"),
+    );
+
+  /* standard image-set() for everyone else (aka. webkit 😿) */
+  background:
+    linear-gradient(var(--overlay), var(--overlay)),
+    image-set(
+      url("/path/to/background.avif") type("image/avif"),
+      url("/path/to/background.webp") type("image/webp"),
+      url("/path/to/background.jpeg") type("image/jpeg"),
+    );
+}&lt;/code&gt;&lt;/pre&gt;
+&lt;/article&gt;
+</content>
+    <author>
+      <name>Baptiste Mispelon</name>
+    </author>
+  </entry>
+  <entry>
+    <title>Etymology, naming things, and off-by-one errors</title>
+    <link href="https://blog.bmispelon.rocks/articles/2024/2024-04-18-etymology-naming-things-off-by-one-error.html"/>
+    <id>https://blog.bmispelon.rocks/articles/2024/2024-04-18-etymology-naming-things-off-by-one-error.html</id>
+    <published>2024-04-07T00:00:00Z</published>
+    <updated>2024-04-07T00:00:00Z</updated>
+    <content type="html">&lt;article&gt;
+  &lt;h1&gt;Etymology, naming things, and off-by-one errors&lt;/h1&gt;
+  &lt;aside class="metadata"&gt;
+    &lt;p class="metadata-pubdate"&gt;
+      &lt;small&gt;Published on &lt;time datetime="2024-04-07"&gt;April 18th&lt;/time&gt;&lt;/small&gt;
+    &lt;/p&gt;
+  &lt;/aside&gt;
+  &lt;p&gt;Have you ever heard of this programming joke?&lt;/p&gt;
+
+  &lt;blockquote&gt;
+    &lt;p&gt;- Why can't programmers tell Halloween and Christmas apart?&lt;/p&gt;
+    &lt;p&gt;- It's because they think &lt;code&gt;OCT31&lt;/code&gt; is the same as &lt;code&gt;DEC25&lt;/code&gt;&lt;/p&gt;
+  &lt;/blockquote&gt;
+
+  &lt;h2&gt;Explaining the joke&lt;/h2&gt;
+  &lt;p&gt;&lt;small&gt;Always a good sign when you have to explain the joke, isn't it?&lt;/small&gt;&lt;/p&gt;
+
+  &lt;p&gt;
+    First off, in case that wasn't obvious: Halloween and Christmas are two holidays that take place on October 31st and
+    December 25th respectively.
+  &lt;/p&gt;
+
+  &lt;p&gt;Next up, we have to talk about numbers. What are they and how do we write them down?&lt;/p&gt;
+
+  &lt;p&gt;
+    A number is a quantity: how many fingers on a typical human hand, how many days in the month of January, how many
+    times the word "pony" appears in the Django source code. To represent those numbers, most places in the world
+    typically use a base ten system (also called decimal) where a number is written down using a sequence of one or more
+    characters and where those characters are selected from &lt;code&gt;0123456789&lt;/code&gt; (we call those "digits"). With this
+    system, our numbers look like this: 10, 31, 235 (that's right, I counted them 🐴).
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    The base 10 system is quite convenient for us humans and it's no big surprise. It's very likely that this system
+    came to be because of the numbers of fingers most of us have (do you know what the Latin word for "finger" is?
+    &lt;em&gt;digitus&lt;/em&gt;). But other than that there's nothing so special about the number 10, and indeed there are times
+    when other systems are more convenient. Another such system that's commonly used (especially with computers) is the
+    base 8 one, also called &lt;strong&gt;octal&lt;/strong&gt; (the Latin word for eight is &lt;em&gt;octō&lt;/em&gt;, a root you might
+    recognize from the word octopus 🐙).
+  &lt;/p&gt;
+
+  &lt;p&gt;If you hadn't already understood the joke, maybe you start to see what's going on by now?&lt;/p&gt;
+
+  &lt;p&gt;
+    I won't go into the mathematics too much here (if that's your thing, the
+    &lt;a href="https://en.wikipedia.org/wiki/Positional_notation"&gt;Wikipedia article&lt;/a&gt; goes pretty deep on the subject),
+    but for our purpose today just know that you can use Python's &lt;code&gt;int()&lt;/code&gt; function to convert the
+    representation of a number (&lt;code&gt;str&lt;/code&gt;) in any base into an actual number (&lt;code&gt;int&lt;/code&gt;).
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;&amp;gt;&amp;gt;&amp;gt; DEC25 = int("25", base=10)  # DEC for decimal = base 10
+&amp;gt;&amp;gt;&amp;gt; OCT31 = int("31", base=8)  # OCT for octal = base 8
+&amp;gt;&amp;gt;&amp;gt; DEC25 == OCT31
+True&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    So yeah that's it. The joke is that the number twenty five is written as &lt;code&gt;25&lt;/code&gt; in the decimal system, and
+    as &lt;code&gt;31&lt;/code&gt; in the octal system. Hilarious right? Isn't it a fun coincidence that the "dec" in "December"
+    looks like the "dec" in "decimal", and that the same goes for "October" and "octal". Well as it turns out, it's no
+    coincidence at all!
+  &lt;/p&gt;
+
+  &lt;h2&gt;Month names&lt;/h2&gt;
+
+  &lt;p&gt;
+    If you speak another European language there's a good chance that most english month names are familiar to you. This
+    is because most languages in Europe (but far from all &lt;a href="#footnote-non-latin-month"&gt;*&lt;/a&gt;) inherited their
+    month names from Latin. Just for fun I used
+    &lt;a href="https://gist.github.com/bmispelon/a203f65f9498bef6f997bf0d792126c8"&gt;Django's translation machinery&lt;/a&gt;
+    to get a list of month names in a few different languages (well except for Latin since Django doesn't ship with a
+    Latin translation ... yet?):
+  &lt;/p&gt;
+
+  &lt;table&gt;
+    &lt;thead&gt;
+      &lt;tr&gt;
+        &lt;th&gt;English (&lt;code&gt;en&lt;/code&gt;)&lt;/th&gt;
+        &lt;th&gt;French (&lt;code&gt;fr&lt;/code&gt;)&lt;/th&gt;
+        &lt;th&gt;Norwegian (&lt;code&gt;nn&lt;/code&gt;)&lt;/th&gt;
+        &lt;th&gt;Romanian (&lt;code&gt;ro&lt;/code&gt;)&lt;/th&gt;
+        &lt;th&gt;Latin (&lt;code&gt;la&lt;/code&gt;)&lt;/th&gt;
+      &lt;/tr&gt;
+    &lt;/thead&gt;
+    &lt;tbody&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;January&lt;/td&gt;
+        &lt;td lang="fr"&gt;janvier&lt;/td&gt;
+        &lt;td lang="nn"&gt;januar&lt;/td&gt;
+        &lt;td lang="ro"&gt;Ianuarie&lt;/td&gt;
+        &lt;td lang="la"&gt;Ianuarius&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;February&lt;/td&gt;
+        &lt;td lang="fr"&gt;février&lt;/td&gt;
+        &lt;td lang="nn"&gt;februar&lt;/td&gt;
+        &lt;td lang="ro"&gt;Februarie&lt;/td&gt;
+        &lt;td lang="la"&gt;Februarius&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;March&lt;/td&gt;
+        &lt;td lang="fr"&gt;mars&lt;/td&gt;
+        &lt;td lang="nn"&gt;mars&lt;/td&gt;
+        &lt;td lang="ro"&gt;Martie&lt;/td&gt;
+        &lt;td lang="la"&gt;Martius&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;April&lt;/td&gt;
+        &lt;td lang="fr"&gt;avril&lt;/td&gt;
+        &lt;td lang="nn"&gt;april&lt;/td&gt;
+        &lt;td lang="ro"&gt;Aprilie&lt;/td&gt;
+        &lt;td lang="la"&gt;Aprilis&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;May&lt;/td&gt;
+        &lt;td lang="fr"&gt;mai&lt;/td&gt;
+        &lt;td lang="nn"&gt;mai&lt;/td&gt;
+        &lt;td lang="ro"&gt;Mai&lt;/td&gt;
+        &lt;td lang="la"&gt;Maius&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;June&lt;/td&gt;
+        &lt;td lang="fr"&gt;juin&lt;/td&gt;
+        &lt;td lang="nn"&gt;juni&lt;/td&gt;
+        &lt;td lang="ro"&gt;Iunie&lt;/td&gt;
+        &lt;td lang="la"&gt;Iunius&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;July&lt;/td&gt;
+        &lt;td lang="fr"&gt;juillet&lt;/td&gt;
+        &lt;td lang="nn"&gt;juli&lt;/td&gt;
+        &lt;td lang="ro"&gt;Iulie&lt;/td&gt;
+        &lt;td lang="la"&gt;Iulius&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;August&lt;/td&gt;
+        &lt;td lang="fr"&gt;août&lt;/td&gt;
+        &lt;td lang="nn"&gt;august&lt;/td&gt;
+        &lt;td lang="ro"&gt;August&lt;/td&gt;
+        &lt;td lang="la"&gt;Augustus&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;September&lt;/td&gt;
+        &lt;td lang="fr"&gt;septembre&lt;/td&gt;
+        &lt;td lang="nn"&gt;september&lt;/td&gt;
+        &lt;td lang="ro"&gt;Septembrie&lt;/td&gt;
+        &lt;td lang="la"&gt;September&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;October&lt;/td&gt;
+        &lt;td lang="fr"&gt;octobre&lt;/td&gt;
+        &lt;td lang="nn"&gt;oktober&lt;/td&gt;
+        &lt;td lang="ro"&gt;Octombrie&lt;/td&gt;
+        &lt;td lang="la"&gt;October&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;November&lt;/td&gt;
+        &lt;td lang="fr"&gt;novembre&lt;/td&gt;
+        &lt;td lang="nn"&gt;november&lt;/td&gt;
+        &lt;td lang="ro"&gt;Noiembrie&lt;/td&gt;
+        &lt;td lang="la"&gt;November&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;December&lt;/td&gt;
+        &lt;td lang="fr"&gt;décembre&lt;/td&gt;
+        &lt;td lang="nn"&gt;desember&lt;/td&gt;
+        &lt;td lang="ro"&gt;Decembrie&lt;/td&gt;
+        &lt;td lang="la"&gt;December&lt;/td&gt;
+      &lt;/tr&gt;
+    &lt;/tbody&gt;
+  &lt;/table&gt;
+
+  &lt;p id="footnote-non-latin-month"&gt;
+    &lt;small
+      &gt;* if your language uses non-Latin derived month names with some cool meanings and/or etymologies please do
+      &lt;a href="/contact.html"&gt;send them my way&lt;/a&gt;!&lt;/small
+    &gt;
+  &lt;/p&gt;
+
+  &lt;h2&gt;A 2000 year old off-by-one error&lt;/h2&gt;
+
+  &lt;p&gt;
+    Alright, so a bunch of European languages use basically the same sets of month names. If you're like me, you might
+    find this interesting but I can also understand that it's not exactly mind-blowing. But look at the month names
+    starting from September. Do you notice a weird pattern? Maybe it helps if I show you the numbers from 1 to 10 in
+    Latin?
+  &lt;/p&gt;
+
+  &lt;ol lang="la"&gt;
+    &lt;li&gt;ūnus&lt;/li&gt;
+    &lt;li&gt;duo&lt;/li&gt;
+    &lt;li&gt;trēs&lt;/li&gt;
+    &lt;li&gt;quattuor&lt;/li&gt;
+    &lt;li&gt;quīnque&lt;/li&gt;
+    &lt;li&gt;sex&lt;/li&gt;
+    &lt;li&gt;septem&lt;/li&gt;
+    &lt;li&gt;octō&lt;/li&gt;
+    &lt;li&gt;novem&lt;/li&gt;
+    &lt;li&gt;decem&lt;/li&gt;
+  &lt;/ol&gt;
+
+  &lt;p&gt;Did that help? No? Well how about if I put those side-by-side with the months?&lt;/p&gt;
+
+  &lt;table&gt;
+    &lt;tbody&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;January&lt;/td&gt;
+        &lt;td lang="la"&gt;Ianuarius&lt;/td&gt;
+        &lt;td&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;February&lt;/td&gt;
+        &lt;td lang="la"&gt;Februarius&lt;/td&gt;
+        &lt;td&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;March&lt;/td&gt;
+        &lt;td lang="la"&gt;Martius&lt;/td&gt;
+        &lt;td lang="la"&gt;ūnus&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;April&lt;/td&gt;
+        &lt;td lang="la"&gt;Aprilis&lt;/td&gt;
+        &lt;td lang="la"&gt;duo&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;May&lt;/td&gt;
+        &lt;td lang="la"&gt;Maius&lt;/td&gt;
+        &lt;td lang="la"&gt;trēs&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;June&lt;/td&gt;
+        &lt;td lang="la"&gt;Iunius&lt;/td&gt;
+        &lt;td lang="la"&gt;quattuor&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;July&lt;/td&gt;
+        &lt;td lang="la"&gt;Iulius&lt;/td&gt;
+        &lt;td lang="la"&gt;quīnque&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;August&lt;/td&gt;
+        &lt;td lang="la"&gt;Augustus&lt;/td&gt;
+        &lt;td lang="la"&gt;sex&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;September&lt;/td&gt;
+        &lt;td lang="la"&gt;September&lt;/td&gt;
+        &lt;td lang="la"&gt;&lt;strong&gt;septem&lt;/strong&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;October&lt;/td&gt;
+        &lt;td lang="la"&gt;October&lt;/td&gt;
+        &lt;td lang="la"&gt;&lt;strong&gt;octō&lt;/strong&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;November&lt;/td&gt;
+        &lt;td lang="la"&gt;November&lt;/td&gt;
+        &lt;td lang="la"&gt;&lt;strong&gt;novem&lt;/strong&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;td lang="en"&gt;December&lt;/td&gt;
+        &lt;td lang="la"&gt;December&lt;/td&gt;
+        &lt;td lang="la"&gt;&lt;strong&gt;decem&lt;/strong&gt;&lt;/td&gt;
+      &lt;/tr&gt;
+    &lt;/tbody&gt;
+  &lt;/table&gt;
+
+  &lt;p&gt;
+    Remember the joke that started this post? How "October" looked like "octal" and "December" like "decimal"? Well as
+    it turns out that wasn't a coincidence at all. The name "September" literally means "month number 7", "October" is
+    8, "November" is 9 and "December" 10. To put it another way, the name of the 9th month of the calendar is "month
+    #7", the 10th is #8, the 11th #9 and the 12th is #10. Lovely isn't it?
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    What happened was that the &lt;a href="https://en.wikipedia.org/wiki/Roman_calendar"&gt;old Roman calendar&lt;/a&gt; used to
+    have 10 months, with March being the first one. January and February were added later by a guy called Julius Caesar
+    who even got a month named after him (and who ironically would probably
+    &lt;a href="https://en.wikipedia.org/wiki/Assassination_of_Julius_Caesar"&gt;not call March his number 1 month&lt;/a&gt;). But
+    when they added those new months they didn't really bother reindexing the names and so they kept them even though
+    they now were off by two.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    It's often said that naming things and off-by-one errors are one of the hardest challenges with programming. Well
+    here we have a great example where a naming issue left to an off-by-two error that's been in production for more
+    than 2000 years. It puts things in perspective doesn't it?
+  &lt;/p&gt;
+&lt;/article&gt;
+</content>
+    <author>
+      <name>Baptiste Mispelon</name>
+    </author>
+  </entry>
+  <entry>
+    <title>Sentry initialization in a Django project</title>
+    <link href="https://blog.bmispelon.rocks/articles/2024/2024-04-06-sentry-initialization-in-a-django-project.html"/>
+    <id>https://blog.bmispelon.rocks/articles/2024/2024-04-06-sentry-initialization-in-a-django-project.html</id>
+    <published>2024-04-06T00:00:00Z</published>
+    <updated>2024-04-06T00:00:00Z</updated>
+    <content type="html">&lt;article&gt;
+  &lt;h1&gt;Sentry initialization in a Django project&lt;/h1&gt;
+  &lt;aside class="metadata"&gt;
+    &lt;p class="metadata-pubdate"&gt;
+      &lt;small&gt;Published on &lt;time datetime="2024-04-06"&gt;April 6th&lt;/time&gt;&lt;/small&gt;
+    &lt;/p&gt;
+  &lt;/aside&gt;
+  &lt;p&gt;
+    At &lt;code&gt;$DAYJOB&lt;/code&gt; we use &lt;a href="https://sentry.io/"&gt;Sentry&lt;/a&gt; to monitor errors in production. It works
+    really well but our particular setup caused an annoyance that was surprisingly tricky to fix.
+  &lt;/p&gt;
+
+  &lt;h2&gt;The annoyance&lt;/h2&gt;
+  &lt;p&gt;
+    Following
+    &lt;a href="https://docs.sentry.io/platforms/python/integrations/django/#configure"&gt;Sentry's official documentation&lt;/a
+    &gt;, we added the following code to our settings file:
+  &lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;import sentry_sdk
+sentry_sdk.init(...)  # credentials etc&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;
+    This works perfectly fine, and once that snippet was in place error reports started showing up in the Sentry
+    interface as they happened in production. So far so good.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    But after some time we started getting reports for some strange errors. Every once in a while, Sentry would start
+    reporting exceptions like &lt;code&gt;SyntaxError&lt;/code&gt; or &lt;code&gt;SystemExit&lt;/code&gt;. What was going on?
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    The answer was quite logical once I understood it, but it did take me by suprise. By putting the
+    &lt;code&gt;sentry_sdk.init(...)&lt;/code&gt; in our settings, it means that Sentry error reporting is active any time the
+    project is loaded. That's a good thing overall as it means you catch a lot of potential problems, but there was once
+    situation for us where that behavior was undesirable: the shell.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    These errors I was observing were the result of one of my coworkers starting a shell (&lt;code&gt;./manage.py shell&lt;/code
+    &gt;) on the server. If they made a typo, Python would throw a &lt;code&gt;SyntaxError&lt;/code&gt; exception which would be
+    diligently caught and reported by Sentry. The same thing also happened when they exited the shell, as Python then
+    throws a &lt;code&gt;SystemExit&lt;/code&gt; exception.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    At first it was pretty fun being able to tease my coworker about their typos, but it got annoying quite fast and I
+    started looking into how to exclude the shell from Sentry's error reporting.
+  &lt;/p&gt;
+
+  &lt;h2&gt;Attempt 1: a better entry point?&lt;/h2&gt;
+
+  &lt;p&gt;
+    My first idea was to find a better place than &lt;code&gt;settings.py&lt;/code&gt; where I could call
+    &lt;code&gt;sentry_sdk.init()&lt;/code&gt;. I figured there must be a file that gets loaded when running the website, but not
+    when running a shell.
+  &lt;/p&gt;
+
+  &lt;p&gt;After thinking about it for a while, I came up with 3 files that could be good candidates:&lt;/p&gt;
+
+  &lt;dl&gt;
+    &lt;dt&gt;&lt;code&gt;settings.py&lt;/code&gt;&lt;/dt&gt;
+    &lt;dd&gt;Our current solution (and the one recommended by the official docs).&lt;/dd&gt;
+    &lt;dt&gt;&lt;code&gt;wsgi.py&lt;/code&gt;&lt;/dt&gt;
+    &lt;dd&gt;
+      Created automatically by Django, this is the file that your webserver (&lt;code&gt;gunicorn&lt;/code&gt;,
+      &lt;code&gt;uwsgi&lt;/code&gt;, ...) will load.
+    &lt;/dd&gt;
+    &lt;dt&gt;&lt;code&gt;manage.py&lt;/code&gt;&lt;/dt&gt;
+    &lt;dd&gt;
+      This file is created automatically by Django when you start a project, and it's very rarely modified but it can be
+      a nifty entry point.
+    &lt;/dd&gt;
+  &lt;/dl&gt;
+
+  &lt;p&gt;
+    At first glance, &lt;code&gt;wsgi.py&lt;/code&gt; seemed like a good entry point for what I wanted, but I quickly realized that
+    it had a major drawback which ended up being a dealbreaker for me: Celery workers.
+  &lt;/p&gt;
+
+  &lt;p&gt;As it turns out, there's more usecases to take into account than just web workers and management commands:&lt;/p&gt;
+
+  &lt;dl&gt;
+    &lt;dt&gt;Web workers&lt;/dt&gt;
+    &lt;dd&gt;The main usecase for most Django projects I would guess (Django is a &lt;em&gt;web&lt;/em&gt;framework after all).&lt;/dd&gt;
+
+    &lt;dt&gt;Management commands&lt;/dt&gt;
+    &lt;dd&gt;
+      Your classic &lt;code&gt;./manage.py COMMAND&lt;/code&gt; (&lt;code&gt;collectstatic&lt;/code&gt;, &lt;code&gt;createsuperuser&lt;/code&gt;,
+      &lt;code&gt;migrate&lt;/code&gt;, ...). Either called manually, or scheduled with something like CRON.
+    &lt;/dd&gt;
+
+    &lt;dt&gt;Celery workers&lt;/dt&gt;
+    &lt;dd&gt;Or any kind of asynchronous task system. Most projects will have one when they reach a certain size.&lt;/dd&gt;
+
+    &lt;dt&gt;Random python scripts&lt;/dt&gt;
+    &lt;dd&gt;
+      Probably not a good practice in general, but for some one-off tasks it's hard to beat the convenience of running a
+      plain python script.
+    &lt;/dd&gt;
+  &lt;/dl&gt;
+
+  &lt;p&gt;
+    3 entry points, 4 different uses cases. If my math is right, that's 12 different scenarios to consider (✅ means the
+    file is loaded, ❌ means it isn't):
+  &lt;/p&gt;
+
+  &lt;table&gt;
+    &lt;thead&gt;
+      &lt;tr&gt;
+        &lt;th&gt;&lt;/th&gt;
+        &lt;th&gt;&lt;code&gt;settings.py&lt;/code&gt;&lt;/th&gt;
+        &lt;th&gt;&lt;code&gt;manage.py&lt;/code&gt;&lt;/th&gt;
+        &lt;th&gt;&lt;code&gt;wsgi.py&lt;/code&gt;&lt;/th&gt;
+      &lt;/tr&gt;
+    &lt;/thead&gt;
+    &lt;tbody&gt;
+      &lt;tr&gt;
+        &lt;th&gt;Web&lt;/th&gt;
+        &lt;td&gt;✅&lt;/td&gt;
+        &lt;td&gt;❌ &lt;a href="#footnote-web-manage-py"&gt;*&lt;/a&gt;&lt;/td&gt;
+        &lt;td&gt;✅&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;th&gt;Celery worker&lt;/th&gt;
+        &lt;td&gt;✅&lt;/td&gt;
+        &lt;td&gt;❌&lt;/td&gt;
+        &lt;td&gt;❌&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;th&gt;Management command&lt;/th&gt;
+        &lt;td&gt;✅&lt;/td&gt;
+        &lt;td&gt;✅ &lt;a href="#footnote-management-cmd"&gt;**&lt;/a&gt;&lt;/td&gt;
+        &lt;td&gt;❌&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;th&gt;Python script&lt;/th&gt;
+        &lt;td&gt;✅ &lt;a href="#footnote-python-script"&gt;***&lt;/a&gt;&lt;/td&gt;
+        &lt;td&gt;❌&lt;/td&gt;
+        &lt;td&gt;❌&lt;/td&gt;
+      &lt;/tr&gt;
+    &lt;/tbody&gt;
+  &lt;/table&gt;
+  &lt;ul class="footnotes"&gt;
+    &lt;li id="footnote-web-manage-py"&gt;
+      &lt;small
+        &gt;* Unless you use something like &lt;a href="https://pypi.org/project/django-webserver/"&gt;django-webserver&lt;/a&gt; or
+        &lt;a href="https://pypi.org/project/django-prodserver/"&gt;django-prodserver&lt;/a&gt;.&lt;/small
+      &gt;
+    &lt;/li&gt;
+    &lt;li id="footnote-management-cmd"&gt;
+      &lt;small
+        &gt;** But only if you use &lt;code&gt;./manage.py COMMAND&lt;/code&gt; and not &lt;code&gt;python -m django COMMAND&lt;/code&gt;.&lt;/small
+      &gt;
+    &lt;/li&gt;
+    &lt;li id="footnote-python-script"&gt;
+      &lt;small&gt;*** If you call &lt;code&gt;django.setup()&lt;/code&gt; in your script, which you probably want to do anyway.&lt;/small&gt;
+    &lt;/li&gt;
+  &lt;/ul&gt;
+
+  &lt;p&gt;
+    As we can see from the table above, there's not really a better entry point that would trigger with web and celery
+    workers, but not with management commands or scripts. So we're back at square one 😩.
+  &lt;/p&gt;
+
+  &lt;h2&gt;Attempt 2: detecting if we're running in a shell 🐌&lt;/h2&gt;
+
+  &lt;p&gt;
+    My second idea was to keep the initialization code in &lt;code&gt;settings.py&lt;/code&gt;, but only execute it if we were not
+    running in a shell. So how do you check which management command you're running? As is often the case, when I have a
+    weird Django question there's a blog article by Adam Johnson that has exactly the answer I want. This time was no
+    different:
+    &lt;a href="https://adamj.eu/tech/2020/05/14/how-to-check-the-running-django-command/"
+      &gt;How to Check the Running Django Command&lt;/a
+    &gt;.
+  &lt;/p&gt;
+
+  &lt;p&gt;So followings Adam's advice, here's what we end up with:&lt;/p&gt;
+
+  &lt;pre&gt;&lt;code&gt;import sys
+import sentry_sdk
+...
+if sys.argv[1:2] != ["shell"]:
+    sentry_sdk.init(...)&lt;/code&gt;&lt;/pre&gt;
+
+  &lt;p&gt;Now we're getting somewhere!&lt;/p&gt;
+
+  &lt;table&gt;
+    &lt;thead&gt;
+      &lt;tr&gt;
+        &lt;th&gt;&lt;/th&gt;
+        &lt;th&gt;&lt;code&gt;sys.argv[1:2] != ["shell"]&lt;/code&gt;&lt;/th&gt;
+      &lt;/tr&gt;
+    &lt;/thead&gt;
+    &lt;tbody&gt;
+      &lt;tr&gt;
+        &lt;th&gt;Web&lt;/th&gt;
+        &lt;td&gt;✅&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;th&gt;Celery worker&lt;/th&gt;
+        &lt;td&gt;✅&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;th&gt;&lt;code&gt;./manage.py shell&lt;/code&gt;&lt;/th&gt;
+        &lt;td&gt;❌&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;th&gt;Management command (anything else)&lt;/th&gt;
+        &lt;td&gt;✅&lt;/td&gt;
+      &lt;/tr&gt;
+      &lt;tr&gt;
+        &lt;th&gt;Python script&lt;/th&gt;
+        &lt;td&gt;✅&lt;/td&gt;
+      &lt;/tr&gt;
+    &lt;/tbody&gt;
+  &lt;/table&gt;
+
+  &lt;p&gt;
+    We haven't reached perfection yet though. One issue for example is that some of my colleagues like to use the
+    &lt;code&gt;shell_plus&lt;/code&gt; command from
+    &lt;a href="https://django-extensions.readthedocs.io/en/latest/shell_plus.html"&gt;django-extensions&lt;/a&gt; instead of the
+    plain &lt;code&gt;shell&lt;/code&gt;. That means the &lt;code&gt;if&lt;/code&gt; needs to be tweaked a bit. And what about other commands?
+    I'm sure that as time goes by I will figure out that more commands need to be excluded and it could get annoying
+    having to maintain a blocklist/allowlist.
+  &lt;/p&gt;
+
+  &lt;h2&gt;Attempt 3?&lt;/h2&gt;
+
+  &lt;p&gt;
+    To be honest I ended up sticking with option 2. It's not perfect, but the limitations seemed acceptable to me and it
+    was a net improvement compared to what we had before.
+  &lt;/p&gt;
+
+  &lt;p&gt;
+    If you've run into this issue and found a solution that worked for you please let me know (you can find ways to
+    contact me on &lt;a href="/about.html"&gt;my "about" page&lt;/a&gt;).
+  &lt;/p&gt;
+&lt;/article&gt;
+</content>
+    <author>
+      <name>Baptiste Mispelon</name>
+    </author>
+  </entry>
+  <entry>
+    <title>A Pony and a Walrus Walk into a Library</title>
+    <link href="https://blog.bmispelon.rocks/articles/2024/2024-03-28-a-pony-and-a-walrus-walk-into-a-library.html"/>
+    <id>https://blog.bmispelon.rocks/articles/2024/2024-03-28-a-pony-and-a-walrus-walk-into-a-library.html</id>
+    <published>2024-03-28T00:00:00Z</published>
+    <updated>2024-03-28T00:00:00Z</updated>
+    <content type="html">&lt;article&gt;
+  &lt;h1&gt;A Pony and a Walrus Walk into a Library&lt;/h1&gt;
+  &lt;p&gt;🦭 + 🐴 + 🏛️ = ❓&lt;/p&gt;
+  &lt;aside class="metadata"&gt;
+    &lt;p class="metadata-pubdate"&gt;
+      &lt;small&gt;Published on &lt;time datetime="2024-03-28"&gt;March 28th&lt;/time&gt;&lt;/small&gt;
+    &lt;/p&gt;
+  &lt;/aside&gt;
+  &lt;p&gt;
+    &lt;strong&gt;TLDR;&lt;/strong&gt;
+    I made a library that adds the walrus operator (&lt;code&gt;:=&lt;/code&gt;) to Django templates:
+    &lt;a href="https://github.com/bmispelon/django-walrus"&gt;django-walrus&lt;/a&gt;.
+  &lt;/p&gt;
+
+  &lt;section&gt;
+    &lt;h2&gt;The walrus operator&lt;/h2&gt;
+    &lt;p&gt;
+      The &lt;strong&gt;walrus operator&lt;/strong&gt; &lt;code&gt;:=&lt;/code&gt; (officially called an
+      &lt;a href="https://docs.python.org/3/reference/expressions.html#assignment-expressions"&gt;"assignment expression"&lt;/a&gt;)
+      was introduced to Python in the 3.8 release (October 2019).
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;small
+        &gt;(It's called "walrus" because &lt;code&gt;:=&lt;/code&gt; looks like the eyes and the tusks of a
+        &lt;a href="https://en.wikipedia.org/wiki/Walrus#/media/File:Pacific_Walrus_-_Bull_(8247646168).jpg"&gt;walrus&lt;/a&gt;, in
+        case you were wondering)&lt;/small
+      &gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      One way to think about this operator is that it's kind of like a regular assignment with &lt;code&gt;=&lt;/code&gt;, but it
+      also "returns" the value it just assigned. So you can assign a value and test against it in a single step, like
+      so:
+    &lt;/p&gt;
+    &lt;pre&gt;&lt;code&gt;# original code
+count = Article.objects.filter(title__icontains="Django").count()
+if count:
+    print(f"Found {count} matching articles")
+else:
+    print("No matching article found")
+
+# rewritten with the walrus operator
+if count := Article.objects.filter(title__icontains="Django").count():
+    print(f"Found {count} matching articles")
+else:
+    print("No matching article found")&lt;/code&gt;&lt;/pre&gt;
+
+    &lt;p&gt;
+      There's a lot more to it (the
+      &lt;a href="https://peps.python.org/pep-0572/"&gt;PEP that introduced the new feature&lt;/a&gt; is 1300 lines long! 😮), but
+      that's the basics. Now let's see how Django gets into the mix.
+    &lt;/p&gt;
+  &lt;/section&gt;
+
+  &lt;section&gt;
+    &lt;h2&gt;Walruses in Django templates&lt;/h2&gt;
+
+    &lt;p&gt;
+      Seeing those examples of how the walrus operator can simplify &lt;code&gt;if&lt;/code&gt; statements in Python got me
+      thinking. Django templates have &lt;code&gt;{% if %}&lt;/code&gt; too, and they kind of have assignments with
+      &lt;code&gt;{% with %}&lt;/code&gt;. So could we somehow use the walrus operator there?
+    &lt;/p&gt;
+
+    &lt;p&gt;
+      Let's say you have the following template that calls out to a
+      &lt;code&gt;some_complicated_function()&lt;/code&gt; that's not particularly efficient (maybe it makes some complez database
+      queries for example, or it calls out to an external API, ...).
+    &lt;/p&gt;
+
+    &lt;pre&gt;&lt;code&gt;{% if mymodel.some_complicated_function %}
+    Result: {{ mymodel.some_complicated_function }}
+{% endif %}&lt;/code&gt;&lt;/pre&gt;
+
+    &lt;p&gt;
+      That's not really ideal because the function is called twice. We can rewrite using
+      &lt;code&gt;{% with %}&lt;/code&gt; to store the result in a variable like this:
+    &lt;/p&gt;
+
+    &lt;pre&gt;&lt;code&gt;{% with result=mymodel.some_complicated_function %}
+    {% if result %}
+        Result: {{ result }}
+    {% endif %}
+{% endwith %}&lt;/code&gt;&lt;/pre&gt;
+
+    &lt;p&gt;
+      Now the function is only called once which is better, but that's a lot of extra lines. Wouldn't it be better if we
+      could do:
+    &lt;/p&gt;
+
+    &lt;pre&gt;&lt;code&gt;{% if result := mymodel.some_complicated_function %}
+    Result: {{ result }}
+{% endif %}&lt;/code&gt;&lt;/pre&gt;
+  &lt;/section&gt;
+
+  &lt;section&gt;
+    &lt;h2&gt;Introducing &lt;code&gt;django-walrus&lt;/code&gt;&lt;/h2&gt;
+
+    &lt;p&gt;
+      That's exactly what my library &lt;a href="https://github.com/bmispelon/django-walrus"&gt;django-walrus&lt;/a&gt; does!
+      Install it with &lt;code&gt;pip install django-walrus&lt;/code&gt;, add &lt;code&gt;"walrus"&lt;/code&gt; to your
+      &lt;code&gt;settings.INSTALLED_APPS&lt;/code&gt;, and the new syntax is magically avaible in your Django templates.
+    &lt;/p&gt;
+
+    &lt;p&gt;
+      The code for it is very simple, but also quite hackish (it uses some internal APIs which are not guaranteed to
+      continue existing as Django is updated):
+    &lt;/p&gt;
+
+    &lt;pre&gt;&lt;code&gt;from django.template import smartif
+
+def _walrus_op(context, x, y):
+    result = y.eval(context)
+    context[x.value.var.var] = result
+    return result
+
+smartif.OPERATORS[':='] = smartif.infix(11, _walrus_op)
+smartif.OPERATORS[':='].id = ':='&lt;/code&gt;&lt;/pre&gt;
+
+    &lt;p&gt;
+      It turns out that Django's &lt;code&gt;{% if %}&lt;/code&gt; tag (whose code is located in the
+      &lt;a href="https://github.com/django/django/blob/main/django/template/smartif.py"&gt;&lt;code&gt;smartif&lt;/code&gt;&lt;/a
+      &gt;) uses a convenient
+      &lt;a
+        href="https://github.com/django/django/blob/944745afe2ec45aed30cef799c250107f1364ca7/django/template/smartif.py#L97C1-L111"
+        &gt;operator dictionary&lt;/a
+      &gt;
+      at its toplevel. This makes it very easy to add custom operators to the template language.
+    &lt;/p&gt;
+
+    &lt;p&gt;
+      For my library I packaged the whole thing in an &lt;code&gt;AppConfig.ready()&lt;/code&gt; so that the monkeypatching happens
+      automatically when the app is loaded, and that was it.
+    &lt;/p&gt;
+  &lt;/section&gt;
+&lt;/article&gt;
+</content>
+    <author>
+      <name>Baptiste Mispelon</name>
+    </author>
+  </entry>
+  <entry>
+    <title>Unicode Poetry Bot</title>
+    <link href="https://blog.bmispelon.rocks/articles/2024/2024-03-27-unicode-poetry-bot.html"/>
+    <id>https://blog.bmispelon.rocks/articles/2024/2024-03-27-unicode-poetry-bot.html</id>
+    <published>2024-03-27T00:00:00Z</published>
+    <updated>2024-03-27T00:00:00Z</updated>
+    <content type="html">&lt;article&gt;
+  &lt;h1&gt;Unicode Poetry Bot&lt;/h1&gt;
+  &lt;aside class="metadata"&gt;
+    &lt;p class="metadata-pubdate"&gt;
+      &lt;small&gt;Published on &lt;time datetime="2024-03-27"&gt;March 27th&lt;/time&gt;&lt;/small&gt;
+    &lt;/p&gt;
+  &lt;/aside&gt;
+  &lt;p&gt;
+    &lt;strong&gt;TLDR;&lt;/strong&gt;
+    I made a &lt;a href="https://botsin.space/@unicodedatapoetry"&gt;tiny bot&lt;/a&gt; that generates "poetry" in 5 lines of
+    Python:
+  &lt;/p&gt;
+  &lt;pre&gt;&lt;code&gt;import random as r, unicodedata
+coolwords = [unicodedata.name(chr(119556+i)).split()[-1] for i in range(83)]
+for w in r.sample(coolwords, r.randrange(9, 15)):
+    print(w, end=r.choice('  \n'))
+print()&lt;/code&gt;&lt;/pre&gt;
+  &lt;p&gt;This blog post explains how the bot works and how I got it hosted for cheap.&lt;/p&gt;
+
+  &lt;section&gt;
+    &lt;h2&gt;0 - The Unicode database&lt;/h2&gt;
+    &lt;p&gt;
+      In order to explain how the bot works, I need to take a brief detour and tell you about the unicode database, and
+      in particular about Python's &lt;code&gt;unicodedata&lt;/code&gt; standard library module.
+    &lt;/p&gt;
+    &lt;p&gt;
+      I'm simplifying a lot (if you want more details, the
+      &lt;a href="https://en.wikipedia.org/wiki/Unicode"&gt;Wikipedia page about Unicode&lt;/a&gt; is a pretty good starter), but
+      basically the Unicode standard is a giant list that assigns a unique id number to all known letters and symbols.
+    &lt;/p&gt;
+    &lt;p&gt;
+      For example the character &lt;code&gt;B&lt;/code&gt; has the id 66, the symbol &lt;code&gt;€&lt;/code&gt; is 8364, and the emoji
+      &lt;code&gt;🐍&lt;/code&gt; is 128013. In Python you can use the builtin function
+      &lt;a href="https://docs.python.org/3/library/functions.html#ord"&gt;&lt;code&gt;ord()&lt;/code&gt;&lt;/a&gt; to get a character's id:
+    &lt;/p&gt;
+    &lt;pre&gt;&lt;code&gt;&amp;gt;&amp;gt;&amp;gt; ord("B")
+66
+&amp;gt;&amp;gt;&amp;gt; ord("€")
+8364
+&amp;gt;&amp;gt;&amp;gt; ord("🐍")
+128013&lt;/code&gt;&lt;/pre&gt;
+    &lt;p&gt;
+      To get a character when you have its id, you use the
+      &lt;a href="https://docs.python.org/3/library/functions.html#chr"&gt;&lt;code&gt;chr()&lt;/code&gt;&lt;/a&gt; builtin function:
+    &lt;/p&gt;
+    &lt;pre&gt;&lt;code&gt;&amp;gt;&amp;gt;&amp;gt; chr(66)
+'B'
+&amp;gt;&amp;gt;&amp;gt; chr(8364)
+'€'
+&amp;gt;&amp;gt;&amp;gt; chr(128013)
+'🐍'&lt;/code&gt;&lt;/pre&gt;
+    &lt;p&gt;
+      But characters don't just have a standard id in unicode, they also have a standard &lt;em&gt;name&lt;/em&gt;, and that's where
+      things start to get a little more interesting. &lt;code&gt;B&lt;/code&gt; is "LATIN CAPITAL LETTER B", &lt;code&gt;€&lt;/code&gt; is "EURO
+      SIGN", and &lt;code&gt;🐍&lt;/code&gt; is ... "SNAKE". Neat, but not a huge surprise probably.
+    &lt;/p&gt;
+    &lt;p&gt;
+      This is what the &lt;code&gt;unicodedata&lt;/code&gt; module is for, and in particular
+      &lt;a href="https://docs.python.org/3/library/unicodedata.html#unicodedata.name"&gt;&lt;code&gt;unicodedata.name()&lt;/code&gt;&lt;/a
+      &gt;. It's part of the standard library and doesn't need to be installed, so you can import it anywhere you have
+      Python installed and try it out:
+    &lt;/p&gt;
+    &lt;pre&gt;&lt;code&gt;&amp;gt;&amp;gt;&amp;gt; import unicodedata
+&amp;gt;&amp;gt;&amp;gt; unicodedata.name("B")
+'LATIN CAPITAL LETTER B'
+&amp;gt;&amp;gt;&amp;gt; unicodedata.name("€")
+'EURO SIGN'
+&amp;gt;&amp;gt;&amp;gt; unicodedata.name("🐍")
+'SNAKE'&lt;/code&gt;&lt;/pre&gt;
+    &lt;p&gt;For some extra fun, you can try the following (some of the examples are sneaky so make sure you copy/paste):&lt;/p&gt;
+    &lt;pre&gt;&lt;code&gt;unicodedata.name("&amp;amp;")
+unicodedata.name("А")
+unicodedata.name(" ")
+unicodedata.name("😤")&lt;/code&gt;&lt;/pre&gt;
+  &lt;/section&gt;
+
+  &lt;section&gt;
+    &lt;h2&gt;1 - The poetry generator&lt;/h2&gt;
+    &lt;p&gt;
+      While I was working on a silly side-project one day (which might come up in a future post), I ended up with a text
+      file listing all the characters known to &lt;code&gt;unicodedata&lt;/code&gt; (their ids and their names). While scrolling
+      rapidly through it something caught my eye around index 119552, and that's how I learned about the
+      &lt;a href="https://en.wikipedia.org/wiki/Taixuanjing"&gt;Taixuanjing&lt;/a&gt;. It's an ancient text written in a special
+      alphabet consisting of about 90 symbols. The interesting bit is that those symbols have some pretty evocative
+      names. In the Unicode database, those symbols are all grouped together and with some basic Python code, we can
+      quickly see a list of them:
+    &lt;/p&gt;
+    &lt;pre&gt;&lt;code&gt;&amp;gt;&amp;gt;&amp;gt; for index in range(119552, 119639):
+...     print(index, unicodedata.name(chr(index)))
+... 
+119552 MONOGRAM FOR EARTH
+119553 DIGRAM FOR HEAVENLY EARTH
+119554 DIGRAM FOR HUMAN EARTH
+119555 DIGRAM FOR EARTHLY HEAVEN
+119556 DIGRAM FOR EARTHLY HUMAN
+119557 DIGRAM FOR EARTH
+119558 TETRAGRAM FOR CENTRE
+119559 TETRAGRAM FOR FULL CIRCLE
+119560 TETRAGRAM FOR MIRED
+119561 TETRAGRAM FOR BARRIER
+119562 TETRAGRAM FOR KEEPING SMALL
+119563 TETRAGRAM FOR CONTRARIETY
+119564 TETRAGRAM FOR ASCENT
+119565 TETRAGRAM FOR OPPOSITION
+119566 TETRAGRAM FOR BRANCHING OUT
+119567 TETRAGRAM FOR DEFECTIVENESS OR DISTORTION
+119568 TETRAGRAM FOR DIVERGENCE
+119569 TETRAGRAM FOR YOUTHFULNESS
+# ...&lt;/code&gt;&lt;/pre&gt;
+
+    &lt;p&gt;Once I had all these cool names, the rest came rather quickly.&lt;/p&gt;
+    &lt;p&gt;
+      I used a list comprehension to go through that list, selecting only the last word (&lt;code&gt;.split()[-1]&lt;/code&gt;).
+    &lt;/p&gt;
+    &lt;p&gt;Then I used &lt;code&gt;random.sample()&lt;/code&gt; to pick between 9 and 15 unique words out of that list.&lt;/p&gt;
+    &lt;p&gt;
+      And finally I printed them out, using the &lt;code&gt;end=r.choice(' \n')&lt;/code&gt; trick to print either a space after the
+      word (66% chance) or a new line (33% chance).
+    &lt;/p&gt;
+    &lt;p&gt;The results are interesting and often have a mystical and/or threatening vibe to them:&lt;/p&gt;
+    &lt;blockquote&gt;
+      DARKENING HUMAN RESPONSE LABOURING SINKING PURITY LEGION STRENGTH ENCOUNTERS ACCUMULATION GATHERING CONTENTION
+      MODEL GUARDEDNESS
+    &lt;/blockquote&gt;
+  &lt;/section&gt;
+
+  &lt;section&gt;
+    &lt;h2&gt;3 - The bot&lt;/h2&gt;
+    &lt;p&gt;
+      Some weeks ago I learned about the &lt;a href="https://botsin.space/"&gt;botsin.space Mastodon instance&lt;/a&gt; which is
+      dedicated to hosting bots (who could have guessed?). I thought this little "poetry" generator would be a perfect
+      excuse to try my hand at building one.
+    &lt;/p&gt;
+    &lt;p&gt;
+      Because I already use them for other projects, I decided to host the bot on
+      &lt;a href="https://m.do.co/c/5ac918daa534"&gt;Digital Ocean&lt;/a&gt; (heads up: that's an affiliate link) and their
+      "serverless" infrastructure.
+    &lt;/p&gt;
+    &lt;p&gt;
+      This "serverless" setup lets me execute some Python at regular intervals (I chose daily but it supports a
+      CRON-like syntax) and it's pretty cheap (my current usage is well within the free tier).
+    &lt;/p&gt;
+    &lt;p&gt;
+      After an evening reading a mix of
+      &lt;a href="https://docs.digitalocean.com/products/functions/how-to/create-functions/"&gt;official documentation&lt;/a&gt;,
+      &lt;a href="https://shkspr.mobi/blog/2018/08/easy-guide-to-building-mastodon-bots/"&gt;blog posts&lt;/a&gt;, and
+      &lt;a href="https://github.com/digitalocean/sample-functions-python-sendgrid-email"&gt;code examples&lt;/a&gt; managed to
+      cobble together &lt;a href="https://github.com/bmispelon/unicodedata-poetry"&gt;a working bot&lt;/a&gt;.
+    &lt;/p&gt;
+    &lt;p&gt;
+      May I present you: &lt;a href="https://botsin.space/@unicodedatapoetry"&gt;@unicodedatapoetry@botsin.space&lt;/a&gt;. If you
+      follow it, you get a random "poem" every day.
+    &lt;/p&gt;
+  &lt;/section&gt;
+&lt;/article&gt;
+</content>
+    <author>
+      <name>Baptiste Mispelon</name>
+    </author>
+  </entry>
+  <entry>
+    <title>Hello World</title>
+    <link href="https://blog.bmispelon.rocks/articles/2024/2024-03-25-hello-world.html"/>
+    <id>https://blog.bmispelon.rocks/articles/2024/2024-03-25-hello-world.html</id>
+    <published>2024-03-25T00:00:00Z</published>
+    <updated>2024-03-25T00:00:00Z</updated>
+    <content type="html">&lt;article&gt;
+  &lt;h1&gt;Hello World&lt;/h1&gt;
+  &lt;aside class="metadata"&gt;
+    &lt;p class="metadata-pubdate"&gt;
+      &lt;small&gt;Published on &lt;time datetime="2024-03-25"&gt;March 25th&lt;/time&gt;&lt;/small&gt;
+    &lt;/p&gt;
+  &lt;/aside&gt;
+  &lt;p&gt;Whelp, there it is.&lt;/p&gt;
+  &lt;p&gt;
+    After several prototypes that went nowhere and literal years of thinking about it, I've finally launched my blog!
+  &lt;/p&gt;
+  &lt;p&gt;
+    All my previous attempts ended with me trying to build a complete (and complicated!) system up front. So this time
+    I'm forcing myself to pick the simplest technology possible: a static site with handwritten HTML.
+  &lt;/p&gt;
+  &lt;p&gt;
+    The layout isn't exactly how I'd want it, and some of the features I would have liked are still missing, but I'm
+    trying really hard not to get distracted. It seems like it's a lot more fun to write a blog
+    &lt;em&gt;engine&lt;/em&gt; than a blog. I guess that's the programmer's curse.
+  &lt;/p&gt;
+  &lt;p&gt;
+    With the technical stuff (mostly) out of the way, now all that's left is to write articles. How hard could that
+    be...
+  &lt;/p&gt;
+&lt;/article&gt;
+</content>
+    <author>
+      <name>Baptiste Mispelon</name>
+    </author>
+  </entry>
+</feed>
