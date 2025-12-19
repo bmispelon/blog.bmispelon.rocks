@@ -30,3 +30,12 @@ headervariants:
 # call the blog engine script bbblog.py
 blog *a:
     uv run bbblog.py {{a}}
+
+# Typecheck the blog engine script
+typecheck:
+    uvx ty check bbblog.py
+
+# Format the blog engine script
+format:
+    uvx ruff format bbblog.py
+    uvx ruff check --fix bbblog.py

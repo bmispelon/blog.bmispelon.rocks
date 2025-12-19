@@ -3,15 +3,14 @@ Baptiste's Basic Blog engine
 
 Use ./bbblog.py --help to see all available commands
 """
+
 from collections import abc
 from dataclasses import dataclass
-from datetime import date, datetime, time, UTC
+from datetime import date, datetime, time
 from functools import partial, wraps
 from operator import attrgetter
-from io import StringIO
 from pathlib import Path
 import random
-import sys
 import subprocess
 import textwrap
 import typing
@@ -26,7 +25,7 @@ BLOG_DIR = Path(__file__).parent / "blog"
 
 JINJAENV = Environment(loader=PackageLoader("bbblog"), autoescape=True)
 
-HtmlTreeOrElement = html.HtmlElement|etree.ElementTree[html.HtmlElement]
+HtmlTreeOrElement = html.HtmlElement | etree.ElementTree[html.HtmlElement]
 
 
 def render_template(name: str, **context) -> str:
@@ -34,12 +33,14 @@ def render_template(name: str, **context) -> str:
     return template.render(**context)
 
 
-def _xpath(tree: HtmlTreeOrElement, xpath:str) -> html.HtmlElement:
-    found, = tree.xpath(xpath)
+def _xpath(tree: HtmlTreeOrElement, xpath: str) -> html.HtmlElement:
+    (found,) = tree.xpath(xpath)
     return found
 
 
-def _xml(tag:str, text:str|None=None, tail:str|None=None, **attrib) -> etree.Element:
+def _xml(
+    tag: str, text: str | None = None, tail: str | None = None, **attrib
+) -> etree.Element:
     node = etree.Element(tag, **attrib)
     if text is not None:
         node.text = text
@@ -63,7 +64,7 @@ def _prettier_html(source: str) -> str:
     )
 
 
-def _prettyprint_html(tree: HtmlTreeOrElement, prettier:bool=True, **kwargs) -> str:
+def _prettyprint_html(tree: HtmlTreeOrElement, prettier: bool = True, **kwargs) -> str:
     kwargs.setdefault("pretty_print", True)
     kwargs.setdefault("doctype", "<!doctype html>")
     kwargs.setdefault("encoding", "unicode")
@@ -75,7 +76,7 @@ def _prettyprint_html(tree: HtmlTreeOrElement, prettier:bool=True, **kwargs) -> 
         return source
 
 
-def _prettyprint_xml(tree: etree.ElementTree|etree.Element) -> str:
+def _prettyprint_xml(tree: etree.ElementTree | etree.Element) -> str:
     etree.indent(tree)
     return etree.tostring(
         tree,
@@ -84,7 +85,7 @@ def _prettyprint_xml(tree: etree.ElementTree|etree.Element) -> str:
     ).decode("utf8")
 
 
-def _mkrss(index_dir: Path, max_entries:int) -> etree.Element:
+def _mkrss(index_dir: Path, max_entries: int) -> etree.Element:
     feed = _xml("feed", xmlns="http://www.w3.org/2005/Atom")
     feed.append(_xml("title", text="{# Blog title goes here #}"))
     feed.append(_xml("subtitle", text="A blog by Baptiste Mispelon"))
@@ -109,7 +110,7 @@ def _mkrss(index_dir: Path, max_entries:int) -> etree.Element:
 
 
 def rewrite_html[**P](
-    fn: abc.Callable[typing.Concatenate[html.HtmlElement, P], None]
+    fn: abc.Callable[typing.Concatenate[html.HtmlElement, P], None],
 ) -> abc.Callable[typing.Concatenate[Path, P], None]:
     """
     A decorator to help write functions that modify a HTML file in place.
@@ -120,8 +121,9 @@ def rewrite_html[**P](
     a filepath, reads its content, parses it as HTML, feeds it to the original
     function, then writes the modified tree back to the file.
     """
+
     @wraps(fn)
-    def decorated(filepath:Path, *args:P.args, **kwargs:P.kwargs) -> None:
+    def decorated(filepath: Path, *args: P.args, **kwargs: P.kwargs) -> None:
         parsed = html.fromstring(filepath.read_text())
         fn(parsed, *args, **kwargs)
         filepath.write_text(_prettyprint_html(parsed))
@@ -150,11 +152,19 @@ class Article:
         parsed = html.parse(article)
         x = partial(_xpath, parsed)
         return cls(
-            title=x('//main/article/h1').text_content().strip(),
-            pubdate_str=x('//main/article//*[@class="metadata-pubdate"]//time').text_content(),
-            pubdate=date.fromisoformat(x('//main/article//*[@class="metadata-pubdate"]//time').attrib['datetime']),
+            title=x("//main/article/h1").text_content().strip(),
+            pubdate_str=x(
+                '//main/article//*[@class="metadata-pubdate"]//time'
+            ).text_content(),
+            pubdate=date.fromisoformat(
+                x('//main/article//*[@class="metadata-pubdate"]//time').attrib[
+                    "datetime"
+                ]
+            ),
             path=article,
-            content=_prettyprint_html(_xpath(parsed, "//main/article"), pretty_print=True, doctype=None),
+            content=_prettyprint_html(
+                _xpath(parsed, "//main/article"), pretty_print=True, doctype=None
+            ),
         )
 
     @property
@@ -258,12 +268,16 @@ def changedate(filepath: Path, newdate_: datetime = datetime.now()) -> Path:
     Change the date of the given article, return the new path. If no date is
     given, uses the current date.
     """
-    newdate: date = newdate_.date()  # XXX: typer currently only supports datetime, not date
+    newdate: date = (
+        newdate_.date()
+    )  # XXX: typer currently only supports datetime, not date
 
     datestr, basetitle = filepath.name[:10], filepath.name[10:]
     articledate = date.fromisoformat(datestr)
 
-    newpath = filepath.parent.parent / str(newdate.year) / f"{newdate.isoformat()}{basetitle}"
+    newpath = (
+        filepath.parent.parent / str(newdate.year) / f"{newdate.isoformat()}{basetitle}"
+    )
 
     # Create the year directory in case we're changing year
     newpath.parent.mkdir(parents=True, exist_ok=True)
@@ -287,7 +301,7 @@ def randomizeheader(filepaths: list[Path]) -> None:
 
 
 @app.command()
-def mkrss(max_entries:int=50) -> None:
+def mkrss(max_entries: int = 50) -> None:
     """
     Generate an RSS (atom) feed of the index page
     """
@@ -297,5 +311,5 @@ def mkrss(max_entries:int=50) -> None:
     print(f"Wrote RSS feed to {atom_file}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app()
